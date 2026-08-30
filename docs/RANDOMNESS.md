@@ -25,18 +25,15 @@ If you need protocol detail for commits, also read [COMMIT_REVEAL.md](COMMIT_REV
 
 ### How the seed is built
 
-Primary helper: `build_internal_seed` / `PrngWinnerSelection` in `randomness.rs`, and `build_internal_seed_u64` used by the finalize path in `lib.rs` / `draw.rs`.
+Primary helper: `build_internal_seed_u64` in `contracts/raffle-instance/src/helpers.rs`; Internal draws in `draw.rs` pass that seed into `do_finalize_with_seed`.
 
-Entropy mixed into the 32-byte path:
+The internal seed hashes this XDR-packed tuple and takes the first 8 bytes as a `u64`:
 
-1. Ledger timestamp  
-1. Ledger sequence  
-1. Network id (SHA-256 of network passphrase)  
-1. Raffle contract address  
+1. Ledger timestamp
+1. Ledger sequence
+1. Current raffle contract address
 
-Values are XDR-packed and hashed with `env.crypto().sha256`, then fed to `env.prng().seed(...)`. Winner indices are sampled without replacement via `u64_in_range`.
-
-The compact u64 seed used when finalizing through `do_finalize_with_seed` hashes `(timestamp, sequence, current_contract_address)` and takes the first 8 bytes.
+`do_finalize_with_seed` then uses `OracleSeedWinnerSelection` for the actual winner selection. Despite the type name, this selector is the shared deterministic `u64`-seeded selection algorithm used by Internal, External/VRF, CommitReveal, fallback, and quorum finalization paths. There is no separate `env.prng()` winner-selection path.
 
 ### Who can influence it
 
@@ -115,7 +112,7 @@ High-stakes draws, public prize pools, or any case where Internal bias is unacce
 
 - Each committer contributes preimage entropy (if they later reveal off-chain).
 - Parties who **withhold** commits reduce entropy.
-- If **zero** commits exist at finalize, the contract **falls back to Internal PRNG** (same path as Internal after the CommitReveal branch).
+- If **zero** commits exist at finalize, the contract **falls back to the Internal u64 seed path** (same path as Internal after the CommitReveal branch).
 
 ### Timeout / fallback
 
@@ -199,7 +196,7 @@ Also consider:
 | Internal | Biased finalize timing | None (inherent) |
 | External | Oracle silent | After 200 ledgers: refund cancel **or** Internal fallback |
 | External | Wrong `request_id` / bad proof | Tx rejects (`InvalidParameters` / crypto fail) |
-| CommitReveal | No commits | Internal PRNG fallback |
+| CommitReveal | No commits | Internal u64 seed fallback |
 | Any | `tickets_sold < min_tickets` or zero sold | `Failed` + `RaffleFailed` (no draw) |
 | Any | Concurrent finalize | `DrawingLock` → `DrawingAlreadyInProgress` |
 
