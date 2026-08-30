@@ -1,22 +1,87 @@
+export type AlertSeverity = 'info' | 'warning' | 'critical';
+
+export interface AlertPayload {
+  type: string;
+  severity: AlertSeverity;
+  message: string;
+  timestamp: number;
+  details?: Record<string, unknown>;
+}
+
+export interface AlerterOptions {
+  webhookUrl?: string;
+  rateLimitMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Delivers operational alerts to a generic JSON webhook (Slack / Discord /
+ * PagerDuty compatible). Alerts are rate-limited per type so repeated failures
+ * collapse into a single aggregated notification within the cooldown window.
+ */
 export class Alerter {
-  private consecutiveFailures = 0;
+  private readonly webhookUrl: string;
+  private readonly rateLimitMs: number;
+  private readonly fetchImpl: typeof fetch;
+  private readonly lastSentAt: Map<string, number> = new Map();
 
-  constructor(private readonly threshold: number = 3) {}
-
-  recordSuccess(): void {
-    this.consecutiveFailures = 0;
+  constructor(options: AlerterOptions = {}) {
+    this.webhookUrl = options.webhookUrl ?? process.env.ALERT_WEBHOOK_URL ?? '';
+    const rawRateLimit = options.rateLimitMs ?? Number(process.env.ALERT_RATE_LIMIT_MS ?? 60_000);
+    this.rateLimitMs = Number.isFinite(rawRateLimit) && rawRateLimit >= 0 ? rawRateLimit : 60_000;
+    this.fetchImpl =
+      options.fetchImpl ??
+      (typeof globalThis.fetch === 'function' ? globalThis.fetch : this.noopFetch);
   }
 
-  recordFailure(): void {
-    this.consecutiveFailures++;
-    if (this.consecutiveFailures >= this.threshold) {
-      this.fire();
+  get enabled(): boolean {
+    return this.webhookUrl.trim().length > 0;
+  }
+
+  /**
+   * Sends an alert if one has not been sent for `type` within the rate-limit
+   * window. Returns `true` when the alert was delivered (or at least allowed
+   * through the rate limiter), `false` when suppressed by rate limiting or when
+   * no webhook is configured.
+   */
+  async notify(alert: Omit<AlertPayload, 'timestamp'>): Promise<boolean> {
+    if (!this.enabled) {
+      return false;
     }
+
+    const now = Date.now();
+    const lastSent = this.lastSentAt.get(alert.type) ?? 0;
+    if (now - lastSent < this.rateLimitMs) {
+      return false;
+    }
+    this.lastSentAt.set(alert.type, now);
+
+    const payload: AlertPayload = { ...alert, timestamp: now };
+
+    try {
+      const response = await this.fetchImpl(this.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        console.error(`Alert delivery failed: HTTP ${response.status}`);
+      }
+    } catch (error) {
+      console.error(
+        `Alert delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    return true;
   }
 
-  private fire(): void {
-    console.error(
-      `ALERT: ${this.consecutiveFailures} consecutive tx-submission failures`,
-    );
+  /** Clears rate-limit state (mainly useful for tests). */
+  reset(): void {
+    this.lastSentAt.clear();
+  }
+
+  private async noopFetch(): Promise<Response> {
+    return new Response(null, { status: 200 });
   }
 }

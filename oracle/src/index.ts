@@ -1,1 +1,47 @@
-console.log("Oracle service starting...");
+import { Alerter } from './alert/alerter';
+import { loadAndValidateConfig } from './config';
+import { OraclePipeline } from './pipeline';
+
+/**
+ * Bootstrap entry point. Wires the full oracle pipeline:
+ * - KeyService for cryptographic operations
+ * - EventListenerService for polling RandomnessRequested events
+ * - RequestQueue for job queuing
+ * - DeduplicationStore for duplicate detection
+ * - VrfService for randomness proof generation
+ * - TxSubmitterService for submitting provide_randomness transactions
+ * - GracefulShutdown for clean shutdown with job draining
+ */
+async function main(): Promise<void> {
+  const config = loadAndValidateConfig();
+
+  const alerter = new Alerter({
+    webhookUrl: config.alertWebhookUrl,
+    rateLimitMs: config.alertRateLimitMs,
+  });
+
+  if (!alerter.enabled) {
+    console.warn('ALERT_WEBHOOK_URL is not set; operational alerts are disabled.');
+  } else {
+    await alerter.notify({
+      type: 'process_start',
+      severity: 'info',
+      message: `Oracle service started (poll interval ${config.pollIntervalMs}ms)`,
+      details: { rpcUrl: config.rpcUrl, pollIntervalMs: config.pollIntervalMs },
+    });
+  }
+
+  // Create and start the oracle pipeline
+  const pipeline = new OraclePipeline({
+    config,
+    alerter,
+  });
+
+  // Start listening for events from the factory contract
+  await pipeline.start([config.factoryContractId]);
+}
+
+main().catch((error) => {
+  console.error(`Oracle service failed to start: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+});

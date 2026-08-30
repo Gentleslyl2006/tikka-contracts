@@ -17,7 +17,7 @@ export class VrfService {
   signRandomnessProof(
     raffleContract: string,
     requestId: bigint,
-    randomSeed: bigint,
+    randomSeed: bigint
   ): RandomnessProof {
     const message = buildVrfProofMessage(raffleContract, requestId, randomSeed);
     const proof = this.keyService.sign(message);

@@ -25,7 +25,7 @@ export class KeyService {
 
   constructor(
     private readonly adapter: SecretsAdapter = new EnvSecretsAdapter(),
-    private readonly secretKeyName: string = 'ORACLE_SECRET_KEY',
+    private readonly secretKeyName: string = 'ORACLE_SECRET_KEY'
   ) {}
 
   /**

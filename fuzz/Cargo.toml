@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name    = "raffle-fuzz"
 version = "0.0.0"
@@ -26,6 +28,21 @@ name = "fuzz_winner_selection"
 path = "fuzz_targets/fuzz_winner_selection.rs"
 test = false
 
+[[bin]]
+name = "fuzz_refund_cancel"
+path = "fuzz_targets/fuzz_refund_cancel.rs"
+test = false
+
+[[bin]]
+name = "fuzz_commit_reveal"
+path = "fuzz_targets/fuzz_commit_reveal.rs"
+test = false
+
+[[bin]]
+name = "fuzz_lifecycle"
+path = "fuzz_targets/fuzz_lifecycle.rs"
+test = false
+
 [dependencies]
 # libfuzzer-sys wires rust code to LLVM libFuzzer
 libfuzzer-sys = "0.4"
@@ -33,6 +50,7 @@ libfuzzer-sys = "0.4"
 arbitrary     = { version = "1", features = ["derive"] }
 # Local contracts
 tikka-raffle-instance = { package = "raffle-instance", path = "../contracts/raffle-instance", features = ["std"] }
+soroban-sdk = { version = "23", features = ["testutils"] }
 
 [profile.release]
 # Optimisation level useful for fuzzing; debug info helps with crash reports

@@ -64,6 +64,14 @@ pub const CHECKPOINT_INTERVAL: u32 = 1_000;
 /// Maximum protocol fee in basis points (20 %).
 pub const MAX_PROTOCOL_FEE_BP: u32 = 2_000;
 
+// --- Recurring raffe constants ----------------------------------------------
+
+/// Minimum interval between recurring raffle rounds (1 hour).
+pub const MIN_RECURRING_INTERVAL_SECONDS: u64 = 3_600;
+
+/// Maximum interval between recurring raffle rounds (365 days).
+pub const MAX_RECURRING_INTERVAL_SECONDS: u64 = 31_536_000;
+
 // --- Pagination defaults ----------------------------------------------------
 
 /// Default number of items returned by paginated queries.
@@ -71,3 +79,21 @@ pub const DEFAULT_PAGE_LIMIT: u32 = 100;
 
 /// Hard cap on items returned by a single paginated query.
 pub const MAX_PAGE_LIMIT: u32 = 200;
+
+// --- TTL bump targets (in ledgers) ------------------------------------------
+
+/// Target TTL ledgers applied to the instance contract entry on every hot-path
+/// bump (buy_tickets, finalize_raffle, extend_ttl entrypoint).
+///
+/// ~6 months at 5 s / ledger: 6 * 30 * 24 * 3600 / 5 = 3 110 400 ledgers.
+pub const INSTANCE_TTL_BUMP_LEDGERS: u32 = 3_110_400;
+
+/// Same horizon used as the *threshold* argument to `extend_ttl`: only extend
+/// when fewer than this many ledgers remain, avoiding unnecessary writes.
+pub const INSTANCE_TTL_THRESHOLD_LEDGERS: u32 = 1_555_200; // ~3 months
+
+/// Target TTL for persistent ticket / commit entries on hot-path bumps.
+pub const PERSISTENT_TTL_BUMP_LEDGERS: u32 = 3_110_400;
+
+/// Threshold for persistent entry bumps.
+pub const PERSISTENT_TTL_THRESHOLD_LEDGERS: u32 = 1_555_200;

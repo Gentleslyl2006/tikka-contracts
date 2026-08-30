@@ -31,6 +31,9 @@ CLAUDE.md
 # Cursor IDE files
 .cursor/
 
+# Kiro IDE files
+.kiro/
+
 # Test snapshots
 test_snapshots/
 
@@ -48,6 +51,7 @@ issue.md
 *.log
 output*.txt
 test_out*.txt
+test_output*.txt
 check_out*.txt
 error*.txt
 *.tar.gz

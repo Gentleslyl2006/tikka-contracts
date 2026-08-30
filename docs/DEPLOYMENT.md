@@ -28,16 +28,16 @@ cp .env.example .env
 
 Every script under `scripts/` loads `.env` when present (`export $(cat .env | xargs)`).
 
-| Variable | Required by | Purpose |
-|---|---|---|
-| `DEPLOYER_SECRET_KEY` | `deploy-*.sh`, `invoke.sh` | Account that signs deploy/invoke txs (`S...`) |
-| `RAFFLE_CONTRACT_ADDRESS` | `invoke.sh`, `verify.sh` | Contract ID to invoke or verify (`C...`) |
-| `STELLAR_NETWORK` | `invoke.sh`, `verify.sh` | Network name (`testnet` default, or `mainnet`) |
-| `STELLAR_RPC_URL` | oracle / manual CLI | Soroban RPC endpoint |
-| `STELLAR_HORIZON_URL` | optional | Horizon endpoint |
-| `FACTORY_CONTRACT_ID` | oracle service | Factory ID the oracle listens on |
-| `ORACLE_ADDRESS` / `ORACLE_SECRET_KEY` | oracle / External raffles | Oracle identity for `provide_randomness` |
-| `ADMIN_ADDRESS` | manual init | Factory admin G-address |
+| Variable                               | Required by                | Purpose                                        |
+| -------------------------------------- | -------------------------- | ---------------------------------------------- |
+| `DEPLOYER_SECRET_KEY`                  | `deploy-*.sh`, `invoke.sh` | Account that signs deploy/invoke txs (`S...`)  |
+| `RAFFLE_CONTRACT_ADDRESS`              | `invoke.sh`, `verify.sh`   | Contract ID to invoke or verify (`C...`)       |
+| `STELLAR_NETWORK`                      | `invoke.sh`, `verify.sh`   | Network name (`testnet` default, or `mainnet`) |
+| `STELLAR_RPC_URL`                      | oracle / manual CLI        | Soroban RPC endpoint                           |
+| `STELLAR_HORIZON_URL`                  | optional                   | Horizon endpoint                               |
+| `FACTORY_CONTRACT_ID`                  | oracle service             | Factory ID the oracle listens on               |
+| `ORACLE_ADDRESS` / `ORACLE_SECRET_KEY` | oracle / External raffles  | Oracle identity for `provide_randomness`       |
+| `ADMIN_ADDRESS`                        | manual init                | Factory admin G-address                        |
 
 > **Security:** Never commit `.env` or secret keys. `DEPLOYER_SECRET_KEY` and `ORACLE_SECRET_KEY` must stay local or in a secrets manager.
 
@@ -219,6 +219,13 @@ stellar contract install \
 
 Exact CLI flag spelling follows `stellar contract invoke --help` for your CLI version. `protocol_fee_bp` is basis points (250 = 2.5%); see [FEE_MODEL.md](FEE_MODEL.md).
 
+### Upgrade procedure
+
+1. Propose a new instance WASM hash through the factory timelock with `propose_wasm_upgrade`.
+2. Confirm the proposal is pending and cannot be executed before `TIMELOCK_DELAY_SECONDS` elapses.
+3. Advance the ledger time past the delay, then invoke `execute_config_change` to apply the upgrade.
+4. Verify the new instance WASM is active and that existing raffles remain readable after the upgrade.
+
 ### 6. Create a raffle
 
 ```bash
@@ -259,10 +266,10 @@ export RAFFLE_CONTRACT_ADDRESS="$(jq -r .contractId deployments/testnet.json)"
 
 Deployment scripts write a small JSON receipt after a successful deploy:
 
-| File | Written by | Contents |
-|---|---|---|
+| File                       | Written by          | Contents                                            |
+| -------------------------- | ------------------- | --------------------------------------------------- |
 | `deployments/testnet.json` | `deploy-testnet.sh` | `network`, `contractId`, `timestamp` (UTC ISO-8601) |
-| `deployments/mainnet.json` | `deploy-mainnet.sh` | same shape for mainnet |
+| `deployments/mainnet.json` | `deploy-mainnet.sh` | same shape for mainnet                              |
 
 Example (`deployments/testnet.json`):
 
@@ -287,7 +294,7 @@ The scripts currently record the **factory** contract ID only. Instance addresse
 
 ## Related docs
 
-- [DEVELOPMENT.md](../DEVELOPMENT.md) — local build and TTL bump examples
+- [DEVELOPMENT.md](DEVELOPMENT.md) — local build and repository workflow
 - [ARCHITECTURE.md](ARCHITECTURE.md) — factory → instance → oracle flow
 - [RANDOMNESS.md](RANDOMNESS.md) — choose Internal / External / CommitReveal before create
 - [FAQ.md](FAQ.md) — CLI naming, WASM targets, Node 20 for `oracle/`

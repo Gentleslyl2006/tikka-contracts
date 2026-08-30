@@ -1,60 +1,58 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Source environment variables if .env exists locally
-if [ -f .env ]; then
-  export $(cat .env | xargs)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
 
 NETWORK="${STELLAR_NETWORK:-testnet}"
-CONTRACT_ID="${RAFFLE_CONTRACT_ADDRESS}"
+CONTRACT_ID="${RAFFLE_CONTRACT_ADDRESS:-}"
 WASM_FILE="target/wasm32v1-none/release/raffle-factory.wasm"
 
-if [ -z "$CONTRACT_ID" ]; then
-    echo "Error: RAFFLE_CONTRACT_ADDRESS environment variable is required"
+if [[ -z "${CONTRACT_ID}" ]]; then
+    echo "Error: RAFFLE_CONTRACT_ADDRESS environment variable is required" >&2
     exit 1
 fi
 
-if [ ! -f "$WASM_FILE" ]; then
-    echo "Error: Local WASM file not found at $WASM_FILE. Please build first."
+if [[ ! -f "${WASM_FILE}" ]]; then
+    echo "Error: Local WASM file not found at ${WASM_FILE}. Please build first." >&2
     exit 1
 fi
 
-echo "Verifying contract $CONTRACT_ID on $NETWORK..."
+echo "Verifying contract ${CONTRACT_ID} on ${NETWORK}..."
 
-# Fetch remote WASM hash using stellar CLI
-# stellar contract inspect --id $CONTRACT_ID output usually contains the hash
-# or you can use `stellar template fetch` to fetch the code 
-REMOTE_INFO=$(stellar contract read --id "$CONTRACT_ID" --network "$NETWORK" 2>/dev/null || true)
-# NOTE: The exact CLI command to get the remote WASM hash varies by stellar CLI version. 
-# Another approach is restoring the contract WASM directly and computing hash.
-stellar contract fetch --id "$CONTRACT_ID" --network "$NETWORK" --out-file remote.wasm
+stellar contract fetch --id "${CONTRACT_ID}" --network "${NETWORK}" --out-file remote.wasm
 
-if [ ! -f "remote.wasm" ]; then
-    echo "Error: Failed to fetch remote contract."
+if [[ ! -f remote.wasm ]]; then
+    echo "Error: Failed to fetch remote contract." >&2
     exit 1
 fi
 
-# Compare hashes
 if command -v sha256sum >/dev/null 2>&1; then
-    LOCAL_HASH=$(sha256sum "$WASM_FILE" | awk '{ print $1 }')
+    LOCAL_HASH=$(sha256sum "${WASM_FILE}" | awk '{ print $1 }')
     REMOTE_HASH=$(sha256sum remote.wasm | awk '{ print $1 }')
 elif command -v shasum >/dev/null 2>&1; then
-    LOCAL_HASH=$(shasum -a 256 "$WASM_FILE" | awk '{ print $1 }')
+    LOCAL_HASH=$(shasum -a 256 "${WASM_FILE}" | awk '{ print $1 }')
     REMOTE_HASH=$(shasum -a 256 remote.wasm | awk '{ print $1 }')
 else
-    echo "Error: Neither sha256sum nor shasum is available to verify hashes."
-    rm remote.wasm
+    echo "Error: Neither sha256sum nor shasum is available to verify hashes." >&2
+    rm -f remote.wasm
     exit 1
 fi
 
-echo "Local WASM Hash:  $LOCAL_HASH"
-echo "Remote WASM Hash: $REMOTE_HASH"
+echo "Local WASM Hash:  ${LOCAL_HASH}"
+echo "Remote WASM Hash: ${REMOTE_HASH}"
 
-# Cleanup
-rm remote.wasm
+rm -f remote.wasm
 
-if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
+if [[ "${LOCAL_HASH}" = "${REMOTE_HASH}" ]]; then
     echo "Verification Result: Match: YES"
     exit 0
 else

@@ -1,54 +1,133 @@
-# Oracle Transaction Submission Runbook
+# Oracle Service Runbook
 
-This document describes how the oracle service handles Soroban transaction submission failures and what operators should do when they see each classification.
+## Crash-safety audit and deduplication
 
-## Retry Policy Overview
+This document maps crash windows and explains the deduplication durability choices.
 
-The oracle uses an exponential backoff with full jitter strategy. The base delay is configurable (default 500ms), capped at 30s, with a maximum attempt count (default 5). Jitter prevents multiple oracles in a quorum from colliding after a shared outage.
+### Failure windows
 
-## Error Classifications
+1. Crash before checkpointing ledger: events may be re-processed after restart; deduplication must prevent double-submission.
+2. Crash after submission but before persisting dedup record: submission may succeed on-chain but the off-chain store not reflect it (risk of duplicate submission after restart).
+3. Crash between enqueue and submission: a job may be lost if it was only in-memory and not checkpointed.
 
-| Classification | Meaning | Operator Action |
-|----------------|---------|-----------------|
-| `transient` | RPC unreachable, 5xx, `TRY_AGAIN_LATER`, network timeouts, connection resets | No action required. The oracle will retry automatically. If failures persist, check RPC endpoint health and network connectivity. |
-| `sequence-collision` | Account sequence mismatch (`AccountSequenceMismatch`, sequence errors) | No action required. The oracle automatically clears its sequence cache and refreshes from the ledger before retrying. If this recurs frequently, investigate concurrent submissions from other sources using the same account. |
-| `insufficient-fee` | Transaction fee too low (`InsufficientFee`) | No action required. The oracle automatically doubles the fee on each retry. If this persists, the network may be congested; consider raising the base fee in configuration. |
-| `tx-expired` | Transaction exceeded ledger bounds or timeout (`TxTooLate`, expired, not confirmed within timeout) | No action required. The oracle automatically rebuilds the transaction with wider timeout bounds and retries. If this recurs, the RPC may be slow; consider increasing the base timeout or checking RPC latency. |
-| `already-satisfied` | Randomness already requested or duplicate detected (`RandomnessAlreadyRequested`, duplicate) | **Do not retry.** The request is already fulfilled. Log for audit and move on. |
-| `invalid-state` | No matching randomness request or invalid contract state (`NoRandomnessRequest`, invalid state) | **Do not retry.** Dead-letter the request. Investigate why the contract rejects the call (e.g., wrong request ID, raffle already closed). |
-| `fatal` | Any other unrecoverable error | **Do not retry.** Review the error message, check contract state, and escalate if the cause is unclear. |
+### Current design
 
-## Alerting
+- `ledger-checkpoint` persists the last processed ledger to `data/checkpoint.json`.
+- `DeduplicationStore` persists seen requests to `data/dedup.json` and provides duplicate detection.
+- The service marks a request as seen after successful submission to avoid false-positive filtering.
 
-The oracle tracks consecutive submission failures. When the count reaches `ALERT_FAILURE_THRESHOLD` (default: 3), it emits an alert to `stderr`.
+### Tradeoffs and mitigation
 
-**Operator response to alerts:**
-1. Check the most recent error classification in logs.
-2. If `transient`: verify RPC endpoint health and network.
-3. If `sequence-collision`: check for duplicate oracle instances or manual submissions.
-4. If `insufficient-fee`: review network fee conditions.
-5. If `tx-expired`: review RPC latency and timeout settings.
-6. If `already-satisfied` or `invalid-state`: investigate contract state and request queue.
-7. If `fatal`: review full error context and escalate.
+- Marking deduplication *after* successful submission avoids lost requests, but introduces a tiny window where a crash after on-chain success but before persistence could lead to duplicate submission.
+- The dedup store is written synchronously to disk on each check.
+- The ledger checkpoint ensures we don't skip events silently.
 
-## Configuration
+## Startup
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALERT_FAILURE_THRESHOLD` | `3` | Consecutive failures before alerting |
-| `STELLAR_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
-| `STELLAR_NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | Network passphrase |
+### Prerequisites
 
-## Recovery Procedures
+The oracle service requires the following environment variables:
 
-### RPC Outage
-If the RPC endpoint is unreachable, the oracle will back off and retry. No manual intervention is needed unless the outage persists beyond the max attempt window. In that case, verify the RPC URL and network path, then restart the oracle.
+- `ORACLE_SECRET_KEY`: Stellar Ed25519 secret key (S... format or 32-byte hex/base64)
+- `STELLAR_RPC_URL`: Soroban RPC endpoint (e.g., https://soroban-testnet.stellar.org)
+- `FACTORY_CONTRACT_ID`: Stellar contract address for the raffle factory
 
-### Stuck Sequence
-If sequence collisions persist, the oracle may be sharing an account with another process. Ensure only one oracle instance submits transactions for a given account, or use a dedicated oracle account.
+Optional configuration:
 
-### Repeated Fee Bumps
-If the oracle is continuously bumping fees, the network may be under heavy load. Consider raising the base fee or pausing non-critical submissions until congestion subsides.
+- `POLL_INTERVAL_MS`: Event polling interval in milliseconds (default: 5000)
+- `ALERT_WEBHOOK_URL`: Webhook URL for operational alerts
+- `ALERT_FAILURE_THRESHOLD`: Consecutive failures before alerting (default: 3)
+- `ALERT_RATE_LIMIT_MS`: Minimum time between alerts (default: 60000)
+- `ALERT_QUEUE_DEPTH_LIMIT`: Queue depth alert threshold (default: 10)
+- `ALERT_QUEUE_AGE_LIMIT_MS`: Queue age alert threshold (default: 300000)
+- `ALERT_RPC_UNREACHABLE_THRESHOLD`: RPC unreachable alert threshold (default: 3)
 
-### Dead-Lettered Requests
-Requests classified as `already-satisfied` or `invalid-state` are not retried. Operators should inspect the raffle contract state to determine if the request needs to be re-queued or if the raffle has already advanced.
+### Starting the service
+
+```bash
+# From the oracle directory
+npm run build
+npm start
+```
+
+Or directly with Node.js:
+
+```bash
+node dist/src/index.js
+```
+
+### Expected log lines
+
+On successful startup, you should see:
+
+```
+Starting oracle service for contracts: <FACTORY_CONTRACT_ID>
+Oracle service started successfully
+```
+
+If alerts are configured and enabled:
+
+```
+Oracle service started (poll interval <POLL_INTERVAL_MS>ms)
+```
+
+If alerts are disabled (no webhook URL):
+
+```
+ALERT_WEBHOOK_URL is not set; operational alerts are disabled.
+```
+
+### Runtime logs
+
+When processing randomness requests:
+
+```
+Successfully submitted provide_randomness: <tx_hash> for raffle=<contract> requestId=<id>
+```
+
+When skipping duplicates:
+
+```
+Skipping duplicate request: raffle=<contract> requestId=<id>
+```
+
+### Shutdown
+
+On graceful shutdown (SIGINT/SIGTERM):
+
+```
+Shutting down oracle service...
+Received SIGTERM — starting graceful shutdown.
+Draining <n> in-flight job(s) before shutdown.
+Job drained: raffle=<contract> requestId=<id>
+Checkpoint persisted at ledger <n>.
+Graceful shutdown complete. Exiting 0.
+```
+
+If shutdown timeout is exceeded:
+
+```
+Graceful shutdown drain exceeded 30000 ms — forcing exit 1.
+```
+
+## Pipeline components
+
+The oracle service wires the following components:
+
+1. **KeyService**: Manages the oracle's Ed25519 keypair for signing
+2. **EventListenerService**: Polls Soroban RPC for RandomnessRequested events
+3. **RequestQueue**: Queues jobs for processing with health monitoring
+4. **DeduplicationStore**: Prevents duplicate submissions
+5. **VrfService**: Generates VRF proofs for randomness
+6. **TxSubmitterService**: Submits provide_randomness transactions with retry logic
+7. **GracefulShutdown**: Drains in-flight jobs before exit
+
+## Data persistence
+
+The service creates two data files in the `./data` directory:
+
+- `checkpoint.json`: Last processed ledger number
+- `dedup.json`: Set of processed (raffle_contract, request_id) pairs
+
+Ensure the `./data` directory is writable by the service process.
+

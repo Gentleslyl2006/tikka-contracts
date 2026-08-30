@@ -6,6 +6,16 @@ on:
   pull_request:
     branches: [ "master" ]
   workflow_dispatch:
+  schedule:
+    # Weekly advisory database refresh (Mondays 06:00 UTC)
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,46 +24,70 @@ jobs:
   build_and_test:
     name: Build, Test, and Lint
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
       with:
         toolchain: stable
         targets: wasm32-unknown-unknown
         components: clippy, rustfmt
 
     - name: Rust Cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
 
     - name: Check Formatting
       run: cargo fmt --all -- --check
 
+    - name: Check for Orphaned Modules
+      run: python3 scripts/check_orphan_modules.py
+
     - name: Build Contracts
       run: cargo build --target wasm32-unknown-unknown --release
 
-    - name: Check WASM Binary Size (128KB limit)
+    - name: Check WASM Binary Size (128KB limit + baseline delta)
+      run: python3 scripts/check_wasm_sizes.py
+
+    - name: Report WASM size delta on PR
+      if: github.event_name == 'pull_request'
       run: |
-        MAX_SIZE=131072
-        FAILED=0
-        for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
-          [ -e "$wasm" ] || continue
-          SIZE=$(stat -c%s "$wasm")
-          echo "$wasm: ${SIZE} bytes"
-          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-            echo "ERROR: $wasm exceeds 128KB limit (${SIZE} > ${MAX_SIZE} bytes)"
-            FAILED=1
-          fi
-        done
-        exit $FAILED
+        python3 scripts/check_wasm_sizes.py
+        if [ -f /tmp/wasm-size-report.txt ]; then
+          {
+            echo "### WASM size report"
+            echo '```'
+            cat /tmp/wasm-size-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+      env:
+        WASM_SIZE_REPORT: /tmp/wasm-size-report.txt
+
+    - name: Check Error Docs Sync
+      run: |
+        python3 scripts/generate_error_docs.py
+        git diff --exit-code docs/ERRORS.md || (echo "ERROR: docs/ERRORS.md is out of sync with Error enum in contracts/raffle-instance/src/lib.rs. Run 'python scripts/generate_error_docs.py' to update." && exit 1)
 
     - name: Run Linter (Clippy)
       run: cargo clippy --all-targets --all-features -- -D warnings
 
     - name: Run Tests
       run: cargo test --workspace
+
+    - name: Run Documentation Tests
+      run: cargo test --workspace --doc
+
+  shellcheck:
+    name: Shell Script Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: shellcheck scripts/*.sh
 
   oracle_check:
     name: Oracle Service CI
@@ -62,16 +96,19 @@ jobs:
       run:
         working-directory: oracle
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: oracle/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Check formatting (Prettier)
+        run: npm run format:check
+      - name: Lint (ESLint)
+        run: npm run lint
       - name: TypeScript compile check
         run: npm run build
       - name: Run tests
-        run: npm test
-        continue-on-error: true
+        run: npm run test:ci

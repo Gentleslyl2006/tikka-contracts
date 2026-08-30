@@ -8,20 +8,26 @@ The oracle requires a secure keypair to sign reveal transactions. The `KeyServic
 
 ### Required environment variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `ORACLE_SECRET_KEY` | Yes | Oracle secret key (`S...`), 32-byte hex, or base64 seed |
-| `STELLAR_RPC_URL` | Yes | Soroban RPC endpoint |
-| `FACTORY_CONTRACT_ID` | Yes | Contract id that the listener subscribes to at startup |
-| `STELLAR_NETWORK_PASSPHRASE` | No | Network passphrase for transaction signing |
-| `RAFFLE_CONTRACT_ADDRESS` | Integration tests | Deployed raffle instance contract |
-| `RANDOMNESS_REQUEST_ID` | Integration tests | Pending randomness request id |
-| `RANDOMNESS_SEED` | No | Seed value for integration tests |
-| `POLL_INTERVAL_MS` | No | Event poller interval (default: `5000`) |
-| `ORACLE_POLL_INTERVAL_MS` | No | Backward-compatible poll interval alias |
-| `LOG_LEVEL` | No | Log verbosity (`info` by default) |
-| `ORACLE_CHECKPOINT_PATH` | No | Ledger checkpoint file for restart recovery |
-| `ORACLE_ADDRESS` | Event listener | This oracle's public key (`G...`) |
+| Variable                     | Required          | Description                                             |
+| ---------------------------- | ----------------- | ------------------------------------------------------- |
+| `ORACLE_SECRET_KEY`          | Yes               | Oracle secret key (`S...`), 32-byte hex, or base64 seed |
+| `STELLAR_RPC_URL`            | Yes               | Soroban RPC endpoint                                    |
+| `FACTORY_CONTRACT_ID`        | Yes               | Contract id that the listener subscribes to at startup  |
+| `STELLAR_NETWORK_PASSPHRASE` | No                | Network passphrase for transaction signing              |
+| `RAFFLE_CONTRACT_ADDRESS`    | Integration tests | Deployed raffle instance contract                       |
+| `RANDOMNESS_REQUEST_ID`      | Integration tests | Pending randomness request id                           |
+| `RANDOMNESS_SEED`            | No                | Seed value for integration tests                        |
+| `POLL_INTERVAL_MS`           | No                | Event poller interval (default: `5000`)                 |
+| `ORACLE_POLL_INTERVAL_MS`    | No                | Backward-compatible poll interval alias                 |
+| `LOG_LEVEL`                  | No                | Log verbosity (`info` by default)                       |
+| `ORACLE_CHECKPOINT_PATH`     | No                | Ledger checkpoint file for restart recovery             |
+| `ORACLE_ADDRESS`             | Event listener    | This oracle's public key (`G...`)                       |
+| `ALERT_WEBHOOK_URL`          | No                | Generic JSON POST webhook (Slack/Discord/PagerDuty). Empty disables alerting |
+| `ALERT_FAILURE_THRESHOLD`    | No                | Consecutive tx-submission failures before alerting (default: `3`) |
+| `ALERT_RATE_LIMIT_MS`        | No                | Min interval between alerts of the same type (default: `60000`) |
+| `ALERT_QUEUE_DEPTH_LIMIT`    | No                | Queue depth that triggers a warning (default: `10`)     |
+| `ALERT_QUEUE_AGE_LIMIT_MS`   | No                | Max age of the oldest queued request (default: `300000`) |
+| `ALERT_RPC_UNREACHABLE_THRESHOLD` | No           | Consecutive RPC poll failures before alerting (default: `3`) |
 
 ### Local Development (Environment Variables)
 
@@ -30,7 +36,7 @@ For local development or testing, provide the secret key via environment variabl
 ```sh
 ORACLE_SECRET_KEY="S..."
 STELLAR_RPC_URL="https://soroban-testnet.stellar.org"
-ORACLE_ADDRESS="G..."
+FACTORY_CONTRACT_ID="C..."
 ```
 
 The `KeyService` validates the key on startup and never logs the private key.
@@ -63,6 +69,34 @@ Register a new oracle public key on-chain via the raffle admin/oracle update flo
 - **`VrfService` (`src/vrf/vrf.service.ts`)**: signs context-bound randomness proofs for `provide_randomness`.
 - **`TxSubmitterService` (`src/tx/tx-submitter.service.ts`)**: submits `provide_randomness` transactions to Soroban RPC.
 - **`EventListenerService` (`src/listener/event-listener.service.ts`)**: polls `RandomnessRequested` contract events and enqueues work for this oracle.
+- **`Alerter` (`src/alert/alerter.ts`)**: pushes operational alerts to a generic JSON webhook with per-type rate limiting.
+
+## Operational Alerting
+
+When `ALERT_WEBHOOK_URL` is set, the oracle pushes a generic JSON POST to the
+webhook (works with Slack, Discord, and PagerDuty endpoints). The alert body is:
+
+```json
+{
+  "type": "rpc_unreachable",
+  "severity": "critical",
+  "message": "RPC unreachable after 3 consecutive polling failures",
+  "timestamp": 1700000000000,
+  "details": { "consecutiveFailures": 3, "threshold": 3 }
+}
+```
+
+Alert triggers:
+
+- **`submission_failure`** — N consecutive `provide_randomness` submissions fail (`ALERT_FAILURE_THRESHOLD`).
+- **`rpc_unreachable`** — N consecutive event-poll RPC calls fail (`ALERT_RPC_UNREACHABLE_THRESHOLD`).
+- **`queue_depth` / `queue_age`** — the request queue exceeds `ALERT_QUEUE_DEPTH_LIMIT`, or the oldest queued request is older than `ALERT_QUEUE_AGE_LIMIT_MS`.
+- **`process_start` / `process_stop`** — emitted by the bootstrap on startup and on `SIGINT`/`SIGTERM`.
+
+Alerts are rate-limited per type: only one webhook delivery per `ALERT_RATE_LIMIT_MS`
+window, so sustained failures aggregate into a single notification instead of a
+webhook storm. Test coverage lives in `src/alert/alerter.test.ts` and the
+service-level tests.
 
 ## Dependency Policy
 
@@ -82,6 +116,8 @@ The workspace `Cargo.toml` pins `soroban-sdk = "23"` and the README mandates Ste
 
 ```sh
 cd oracle
+nvm use
+npm ci
 npm test
 ```
 

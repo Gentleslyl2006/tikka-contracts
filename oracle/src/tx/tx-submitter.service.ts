@@ -6,6 +6,7 @@ import {
   TransactionBuilder,
   nativeToScVal,
 } from '@stellar/stellar-sdk';
+import { Alerter } from '../alert/alerter';
 import { KeyService } from '../keys/key.service';
 import { RetryPolicy, RetryClass } from './retry-policy';
 import { Alerter } from '../alert/alerter';
@@ -18,28 +19,39 @@ export interface ProvideRandomnessParams {
   requestId: bigint;
 }
 
-export interface SubmitResult {
-  hash: string;
-  attempts: number;
+export interface TxSubmitterOptions {
+  rpcUrl?: string;
+  networkPassphrase?: string;
+  alerter?: Alerter;
+  failureThreshold?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export class TxSubmitterService {
   private readonly server: SorobanRpc.Server;
+  private readonly networkPassphrase: string;
+  private readonly alerter?: Alerter;
+  private readonly failureThreshold: number;
+  private readonly sleepImpl: (ms: number) => Promise<void>;
   private sequenceCache?: string;
-  private feeBumpCount = 0;
-  private timeoutMultiplier = 1;
+  private consecutiveFailures = 0;
 
   constructor(
     private readonly keyService: KeyService,
-    private readonly retryPolicy: RetryPolicy = new RetryPolicy(),
-    private readonly alerter: Alerter = new Alerter(
-      parseInt(process.env.ALERT_FAILURE_THRESHOLD ?? '3', 10),
-    ),
-    rpcUrl: string = process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org',
-    private readonly networkPassphrase: string = process.env.STELLAR_NETWORK_PASSPHRASE ??
-      Networks.TESTNET,
+    options: TxSubmitterOptions | string = {},
   ) {
+    // Allow passing a plain rpcUrl string for convenience (e.g. in tests).
+    if (typeof options === 'string') {
+      options = { rpcUrl: options };
+    }
+    const rpcUrl = options.rpcUrl ?? process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
     this.server = new SorobanRpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
+    this.networkPassphrase =
+      options.networkPassphrase ?? process.env.STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET;
+    this.alerter = options.alerter;
+    this.failureThreshold =
+      options.failureThreshold ?? Number(process.env.ALERT_FAILURE_THRESHOLD ?? 3);
+    this.sleepImpl = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async submitProvideRandomness(params: ProvideRandomnessParams): Promise<SubmitResult> {
@@ -48,42 +60,31 @@ export class TxSubmitterService {
     for (let attempt = 0; attempt < this.retryPolicy.maxAttempts; attempt++) {
       try {
         const hash = await this.submitOnce(params);
-        this.alerter.recordSuccess();
-        return { hash, attempts: attempt + 1 };
+        this.consecutiveFailures = 0;
+        return hash;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const decision = this.retryPolicy.classify(lastError);
 
-        if (!decision.retry) {
-          this.alerter.recordFailure();
-          throw new Error(
-            `Permanent failure submitting provide_randomness (${decision.class}): ${lastError.message}`,
-          );
+        this.recordFailure(message);
+
+        if (!this.isRetryable(message)) {
+          throw new Error(`Permanent failure submitting provide_randomness: ${message}`);
         }
 
         if (decision.action === 'refresh-sequence') {
           this.sequenceCache = undefined;
         }
 
-        if (decision.action === 'bump-fee') {
-          this.feeBumpCount++;
-        }
-
-        if (decision.action === 'rebuild-bounds') {
-          this.timeoutMultiplier *= 2;
-        }
-
-        this.alerter.recordFailure();
-
-        if (attempt < this.retryPolicy.maxAttempts - 1) {
-          const delay = this.retryPolicy.nextDelay(attempt);
-          await this.sleep(delay);
+        if (attempt < MAX_RETRIES - 1) {
+          const delay = BASE_BACKOFF_MS * 2 ** attempt;
+          await this.sleepImpl(delay);
         }
       }
     }
 
     throw new Error(
-      `Failed to submit provide_randomness after ${this.retryPolicy.maxAttempts} attempts: ${lastError?.message}`,
+      `Failed to submit provide_randomness after ${MAX_RETRIES} attempts: ${lastError?.message}`
     );
   }
 
@@ -99,14 +100,11 @@ export class TxSubmitterService {
       nativeToScVal(params.randomSeed, { type: 'u64' }),
       nativeToScVal(Buffer.from(params.publicKey), { type: 'bytes' }),
       nativeToScVal(Buffer.from(params.proof), { type: 'bytes' }),
-      nativeToScVal(params.requestId, { type: 'u64' }),
+      nativeToScVal(params.requestId, { type: 'u64' })
     );
 
-    const fee = String(BigInt(100000) * BigInt(2 ** this.feeBumpCount));
-    const timeout = 300 * this.timeoutMultiplier;
-
-    let tx = new TransactionBuilder(sourceAccount, {
-      fee,
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: '100000',
       networkPassphrase: this.networkPassphrase,
     })
       .addOperation(operation)
@@ -123,9 +121,7 @@ export class TxSubmitterService {
 
     const sendResult = await this.server.sendTransaction(prepared);
     if (sendResult.status === 'ERROR') {
-      throw new Error(
-        `Send failed: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`,
-      );
+      throw new Error(`Send failed: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`);
     }
 
     const hash = sendResult.hash;
@@ -147,19 +143,52 @@ export class TxSubmitterService {
   private async pollTransaction(
     hash: string,
     maxAttempts = 30,
-    intervalMs = 2000,
+    intervalMs = 2000
   ): Promise<SorobanRpc.Api.GetTransactionResponse> {
     for (let i = 0; i < maxAttempts; i++) {
       const result = await this.server.getTransaction(hash);
       if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
         return result;
       }
-      await this.sleep(intervalMs);
+      await this.sleepImpl(intervalMs);
     }
     throw new Error(`TxTooLate: transaction ${hash} not confirmed within timeout`);
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private isRetryable(message: string): boolean {
+    const retryable = [
+      'TxTooLate',
+      'InsufficientFee',
+      'AccountSequenceMismatch',
+      'ECONNRESET',
+      'ETIMEDOUT',
+      'fetch failed',
+      'network',
+      'not confirmed within timeout',
+      'Send failed',
+      // HTTP 5xx transient errors from getAccount / simulate / send
+      'status code 5',
+      'status code 429',
+      'Request failed',
+    ];
+    return retryable.some((token) => message.includes(token));
+  }
+
+  private recordFailure(message: string): void {
+    this.consecutiveFailures += 1;
+    if (!this.alerter || this.consecutiveFailures < this.failureThreshold) {
+      return;
+    }
+
+    void this.alerter.notify({
+      type: 'submission_failure',
+      severity: 'critical',
+      message: `provide_randomness submission failed (${this.consecutiveFailures} consecutive): ${message}`,
+      details: {
+        consecutiveFailures: this.consecutiveFailures,
+        threshold: this.failureThreshold,
+        message,
+      },
+    });
   }
 }

@@ -1,43 +1,52 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Source environment variables if .env exists locally
-if [ -f .env ]; then
-  export $(cat .env | xargs)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
 fi
+
+require_env() {
+  local name="$1"
+  if [[ -z "${!name:-}" ]]; then
+    echo "Error: ${name} is required to deploy" >&2
+    exit 1
+  fi
+}
+
+require_env DEPLOYER_SECRET_KEY
 
 echo "Building WASM..."
 stellar contract build
 
 WASM_FILE="target/wasm32v1-none/release/raffle-factory.wasm"
 
-if [ ! -f "$WASM_FILE" ]; then
-    echo "Error: WASM file not found at $WASM_FILE"
+if [[ ! -f "${WASM_FILE}" ]]; then
+    echo "Error: WASM file not found at ${WASM_FILE}" >&2
     exit 1
 fi
-
 
 echo "Deploying to Testnet..."
-# Requires DEPLOYER_SECRET_KEY to be set
-if [ -z "$DEPLOYER_SECRET_KEY" ]; then
-    echo "Error: DEPLOYER_SECRET_KEY is required to deploy"
-    exit 1
-fi
 
 CONTRACT_ID=$(stellar contract deploy \
-  --wasm "$WASM_FILE" \
+  --wasm "${WASM_FILE}" \
   --source "${DEPLOYER_SECRET_KEY}" \
   --network testnet)
 
 echo "Deployment successful!"
-echo "Contract ID: $CONTRACT_ID"
+echo "Contract ID: ${CONTRACT_ID}"
 
-# Optionally write to deployments/testnet.json
 mkdir -p deployments
 cat <<EOF > deployments/testnet.json
 {
   "network": "testnet",
-  "contractId": "$CONTRACT_ID",
+  "contractId": "${CONTRACT_ID}",
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 }
 EOF

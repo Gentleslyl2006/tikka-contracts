@@ -8,30 +8,34 @@
 # Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Global fallback - all files
-* @maintainers
+* @crackedstudio/maintainers
 
 # Smart contracts (Rust)
-contracts/** @maintainers
+contracts/** @crackedstudio/maintainers
 
 # Oracle service (TypeScript/Node.js)
-oracle/** @maintainers
+oracle/** @crackedstudio/maintainers
 
 # GitHub configuration (workflows, templates, etc.)
-.github/** @maintainers
+.github/** @crackedstudio/maintainers
 
 # Documentation
-docs/** @maintainers
-*.md @maintainers
+docs/** @crackedstudio/maintainers
+*.md @crackedstudio/maintainers
 
 # Deployment scripts
-scripts/** @maintainers
+scripts/** @crackedstudio/maintainers
 
 # CI/CD configuration
-.github/workflows/** @maintainers
+.github/workflows/** @crackedstudio/maintainers
 
 # Root configuration files
-Cargo.toml @maintainers
-Cargo.lock @maintainers
-package.json @maintainers
-package-lock.json @maintainers
-.env.example @maintainers
+Cargo.toml @crackedstudio/maintainers
+Cargo.lock @crackedstudio/maintainers
+package.json @crackedstudio/maintainers
+package-lock.json @crackedstudio/maintainers
+.env.example @crackedstudio/maintainers
+
+# Dependency manifests — individual review for supply-chain changes
+deny.toml @crackedstudio/maintainers
+oracle/Dockerfile @crackedstudio/maintainers
