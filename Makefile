@@ -1,4 +1,4 @@
-.PHONY: build test lint fuzz clean deploy-testnet oracle-build oracle-test all
+.PHONY: build test lint fuzz clean deploy-testnet oracle-build oracle-test oracle-lint all
 
 build:
 	cargo build --target wasm32-unknown-unknown --release
@@ -30,5 +30,8 @@ oracle-build:
 
 oracle-test:
 	cd oracle && npm test
+
+oracle-lint:
+	cd oracle && npm run lint
 
 all: lint test build

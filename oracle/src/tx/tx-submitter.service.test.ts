@@ -24,7 +24,7 @@ describe('TxSubmitterService integration', () => {
       }
 
       const randomSeed = BigInt(process.env.RANDOMNESS_SEED ?? '42');
-      const message = buildVrfProofMessage(raffleContract, BigInt(requestId), randomSeed);
+      const message = buildVrfProofMessage(raffleContract, BigInt(requestId));
       const proof = keyService.sign(message);
       const publicKey = keyService.getPublicKeyBytes();
 

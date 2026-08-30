@@ -299,8 +299,16 @@ impl WinnerSelectionStrategy for PrngWinnerSelection {
 ///
 /// See also: [`docs/RANDOMNESS.md`](../../../../docs/RANDOMNESS.md) — External
 /// / VRF mode.
-pub fn build_vrf_proof_message(env: &Env, request_id: u64, random_seed: u64) -> Bytes {
-    (env.current_contract_address(), request_id, random_seed).to_xdr(env)
+pub fn build_vrf_proof_message(env: &Env, request_id: u64) -> Bytes {
+    (env.current_contract_address(), request_id).to_xdr(env)
+}
+
+/// Derive the canonical seed from a verified proof.
+pub fn derive_random_seed_from_proof(env: &Env, proof: &BytesN<64>) -> u64 {
+    let proof_bytes: Bytes = Bytes::from_array(env, &proof.to_array());
+    let hash: BytesN<32> = env.crypto().sha256(&proof_bytes).into();
+    let arr = hash.to_array();
+    u64::from_be_bytes([arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], arr[6], arr[7]])
 }
 
 /// Oracle-backed winner selection using an externally provided VRF seed.

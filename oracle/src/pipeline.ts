@@ -137,9 +137,8 @@ export class OraclePipeline {
     }
 
     try {
-      // Generate VRF proof
-      const randomSeed = Date.now(); // In production, this should come from a secure source
-      const proof = this.vrfService.signRandomnessProof(raffleContract, requestId, BigInt(randomSeed));
+      // Generate proof and derive the seed from the proof itself.
+      const proof = this.vrfService.signRandomnessProof(raffleContract, requestId);
 
       // Submit transaction
       const txHash = await this.txSubmitter.submitProvideRandomness({

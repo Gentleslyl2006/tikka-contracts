@@ -2,11 +2,18 @@
   "name": "oracle-service",
   "version": "1.0.0",
   "description": "Off-chain oracle service for Tikka Contracts",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/src/index.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsc -w -p tsconfig.json --preserveWatchOutput",
     "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --runInBand",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:ci": "jest --ci --coverage --runInBand",
     "format": "prettier --write \"src/**/*.{ts,md}\" \"*.md\"",
     "format:check": "prettier --check \"src/**/*.{ts,md}\" \"*.md\"",

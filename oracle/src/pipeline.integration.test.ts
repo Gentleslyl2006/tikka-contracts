@@ -133,8 +133,7 @@ describe.skip('Oracle Pipeline Integration', () => {
 
       // ===== Process queued job: VRF signing =====
       const vrf = new VrfService(keyService);
-      const randomSeed = 123456789n;
-      const proof = vrf.signRandomnessProof(raffleContract, requestId, randomSeed);
+      const proof = vrf.signRandomnessProof(raffleContract, requestId);
 
       expect(proof.proof).toHaveLength(64); // Ed25519 signature length
       expect(proof.publicKey).toEqual(keyService.getPublicKeyBytes());
