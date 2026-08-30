@@ -485,10 +485,12 @@ macro_rules! impl_require_not_paused {
     };
 }
 
+/// Unit tests for RaffleConfig defaults and resolution (#734).
 #[cfg(test)]
 mod test {
     use super::*;
     use soroban_sdk::{Env, String, Address, BytesN, Vec};
+    /// Helper to construct a canonical test configuration with explicit documented defaults.
     fn default_config(env: &Env) -> RaffleConfig {
         let payment_token = Address::from_string(&String::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"));
         RaffleConfig {
