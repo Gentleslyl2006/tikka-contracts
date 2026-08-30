@@ -437,3 +437,73 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         args,
     );
 }
+
+/// Extend the TTL of all raffle storage entries to prevent archival.
+///
+/// This is called automatically after finalization to ensure the fairness
+/// data and winner information remain queryable long after the draw.
+///
+/// # Parameters
+///
+/// - `env` — The Soroban environment
+/// - `total_tickets` — The number of tickets sold (used to calculate persistent
+///   entries to bump)
+///
+/// # Storage Extended
+///
+/// - Instance storage: Raffle, Admin, Paused, metadata, etc.
+/// - Persistent storage: All tickets (1 to `total_tickets`) and fairness data
+/// - Quorum seeds and other temporary entries (if present)
+pub(crate) fn bump_raffle_ttl(env: &Env, total_tickets: u32) {
+    // Extend instance storage (Raffle, Admin, etc.)
+    // Use conservative values: min=500, max=3650 (approximately 1 year in 5-second blocks)
+    let _ = env.storage().instance().extend_ttl(500, 3650);
+
+    // Extend persistent storage for all ticket entries
+    for ticket_id in 1..=total_tickets {
+        let _ = env
+            .storage()
+            .persistent()
+            .extend_ttl(&DataKey::Ticket(ticket_id), 500, 3650);
+    }
+
+    // Extend fairness data (RandomnessSeed contains FairnessMetadata)
+    let _ = env
+        .storage()
+        .persistent()
+        .extend_ttl(&DataKey::RandomnessSeed, 500, 3650);
+
+    // Extend quorum-related entries if they exist
+    if let Some(submitted_oracles) = env
+        .storage()
+        .instance()
+        .get::<_, soroban_sdk::Vec<Address>>(&DataKey::QuorumSubmittedOracles)
+    {
+        for oracle in submitted_oracles.iter() {
+            let _ = env
+                .storage()
+                .persistent()
+                .extend_ttl(&DataKey::QuorumSeed(oracle), 500, 3650);
+        }
+    }
+}
+
+/// Permissionless entrypoint — anyone may call this to prevent a raffle
+/// from being archived by Soroban's TTL expiry.
+///
+/// This extends the TTL of the raffle instance and all associated storage
+/// entries. It is permissionless so that ticket holders, rafflers, or any
+/// interested party can keep long-running raffles alive indefinitely.
+///
+/// For raffles with `no_deadline = true`, this is the only mechanism for
+/// keeping storage from being archived after the ledger's natural TTL window
+/// expires (approximately 1 month for most Soroban networks).
+///
+/// # Errors
+///
+/// - [`Error::NotInitialized`] — the contract has not been initialised yet.
+pub(crate) fn extend_ttl(env: Env) -> Result<(), Error> {
+    let raffle = read_raffle(&env)?;
+    bump_raffle_ttl(&env, raffle.tickets_sold);
+    Ok(())
+}

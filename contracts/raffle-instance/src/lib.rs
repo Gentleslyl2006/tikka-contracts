@@ -600,17 +600,13 @@ if config.randomness_source == RandomnessSource::External {
     /// Calling it earlier returns `CancelTimelockActive`; calling it with no
     /// pending schedule returns `CancelNotScheduled`.
     pub fn execute_admin_cancel(env: Env) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::execute_admin_cancel(env)
     }
 
     /// Returns the timestamp at which a scheduled admin cancel becomes
     /// executable, or `None` if no cancel is currently scheduled (#406).
     pub fn get_pending_cancel(env: Env) -> Option<u64> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        None
+        views::get_pending_cancel(env)
     }
 
     pub fn refund_prize(env: Env) -> Result<(), Error> {
@@ -630,9 +626,7 @@ if config.randomness_source == RandomnessSource::External {
         owner: Address,
         ticket_ids: Vec<u32>,
     ) -> Result<i128, Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `claim.rs`.
-        Err(Error::InvalidParameters)
+        claim::batch_refund_tickets(env, owner, ticket_ids)
     }
 
     pub fn get_raffle(env: Env) -> Result<Raffle, Error> {
@@ -666,9 +660,7 @@ if config.randomness_source == RandomnessSource::External {
     /// O(1) read.  Falls back to an empty Vec when the address has never
     /// purchased a ticket.
     pub fn get_my_tickets(env: Env, owner: Address) -> Vec<u32> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        Vec::new(&env)
+        views::get_my_tickets(env, owner)
     }
 
     pub fn wipe_storage(env: Env) -> Result<(), Error> {
@@ -752,9 +744,7 @@ if config.randomness_source == RandomnessSource::External {
     }
 
     pub fn update_metadata_hash(env: Env, new_hash: BytesN<32>) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::update_metadata_hash(env, new_hash)
     }
 
 }
@@ -762,15 +752,11 @@ if config.randomness_source == RandomnessSource::External {
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
     /// from being archived by Soroban's TTL expiry.
     ///
-    /// This entrypoint is currently unimplemented and returns
-    /// [`Error::InvalidParameters`]. It does not bump any TTLs.
-    ///
-    /// The intended permissionless behavior is design documentation only.
+    /// Extends the TTL of the raffle and all associated storage entries,
+    /// allowing indefinite preservation of raffles without deadline or when
+    /// ticket holders wish to keep them alive.
     pub fn extend_ttl(env: Env) -> Result<(), Error> {
-        let raffle = read_raffle(&env)?;
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `helpers.rs`.
-        Err(Error::InvalidParameters)
+        helpers::extend_ttl(env)
     }
 }
 #[cfg(test)]
