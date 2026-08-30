@@ -11,6 +11,9 @@ rust-version = "1.70"
 
 [workspace.dependencies]
 soroban-sdk = "23"
+ed25519-dalek = "=3.0.0"
+getrandom = "0.4.3"
+rand = "0.8.8"
 
 [profile.release]
 opt-level = "z"

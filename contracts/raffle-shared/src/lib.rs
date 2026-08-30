@@ -281,18 +281,22 @@ pub struct Ticket {
     pub ticket_number: u32,
     /// The address that paid for this ticket.
     pub payer: Address,
+    /// Price actually paid for this ticket (in token base units).
+    /// Records the effective price including any early-bird discount.
+    pub price_paid: i128,
 }
 
 impl Ticket {
     /// Create a ticket with the canonical invariant that the human-facing ticket
     /// number matches the monotonic storage id.
-    pub fn new(id: u32, owner: Address, purchase_time: u64) -> Self {
+    pub fn new(id: u32, owner: Address, purchase_time: u64, price_paid: i128) -> Self {
         Self {
             id,
             owner: owner.clone(),
             purchase_time,
             ticket_number: id,
             payer: owner,
+            price_paid,
         }
     }
 }

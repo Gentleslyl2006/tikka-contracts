@@ -136,7 +136,7 @@ pub(crate) fn refund_ticket(env: Env, ticket_id: u32) -> Result<i128, Error> {
     env.storage().persistent().set(&DataKey::TicketRefunded(ticket_id), &true);
 
     let token_client = token::Client::new(&env, &raffle.payment_token);
-    token_client.try_transfer(&env.current_contract_address(), &ticket.owner, &raffle.ticket_price).map_err(|_| Error::TokenTransferFailed)?;
-    TicketRefunded { buyer: ticket.owner, ticket_number: ticket.ticket_number, amount: raffle.ticket_price, timestamp: env.ledger().timestamp() }.publish(&env);
-    Ok(raffle.ticket_price)
+    token_client.try_transfer(&env.current_contract_address(), &ticket.owner, &ticket.price_paid).map_err(|_| Error::TokenTransferFailed)?;
+    TicketRefunded { buyer: ticket.owner, ticket_number: ticket.ticket_number, amount: ticket.price_paid, timestamp: env.ledger().timestamp() }.publish(&env);
+    Ok(ticket.price_paid)
 }
