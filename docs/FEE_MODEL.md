@@ -24,3 +24,17 @@ For a raffle with protocol_fee_bp = 250 (2.5%), ticket_price = 100 XLM, and 10 t
 - Ticket fees: 10 × 2.5 XLM = 25 XLM
 - Prize claim fee: 0 XLM
 - **Total protocol revenue: 25 XLM**
+  
+## Bundle pricing vs early-bird
+
+When both apply:
+
+1. **Bundle first** — unit price is the best `TicketBundle` with
+   `bundle.quantity <= purchase quantity` (otherwise list `ticket_price`).
+2. **Early-bird second** — `early_bird_discount_bp` applies to that unit price
+   for tickets still inside the early-bird window (`tickets_sold` vs cap from
+   `early_bird_ticket_percentage` of `max_tickets`).
+3. **Protocol fee last** — computed on the post-discount total.
+
+Early-bird does not re-discount the original list price after a bundle is chosen;
+it reduces the selected unit price only.
