@@ -272,6 +272,48 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .map(|a| a / 10000)
 }
 
+/// Re-sample from `initial_index` until the resolved ticket owner is not already
+/// present in `winners`. Returns the original index if no distinct owner exists.
+///
+/// # Probing Strategy & Determinism
+///
+/// Uses linear probing starting from `initial_index` modulo `total_tickets`.
+/// Probing is strictly deterministic based on `(seed, tier, initial_index)` and `total_tickets`.
+/// The probe count is bounded by `total_tickets` linear probes to guarantee termination,
+/// preventing infinite loops when a single address owns all sold tickets.
+///
+/// *Note on Fairness:* Linear probing skews slightly toward addresses immediately following
+/// a collision. Third-party verifiers can reproduce the draw by replaying this linear probe.
+fn resolve_unique_winner(
+    env: &Env,
+    _seed: u64,
+    _tier: u32,
+    total_tickets: u32,
+    winners: &Vec<Address>,
+    initial_index: u32,
+) -> u32 {
+    if total_tickets == 0 {
+        return initial_index;
+    }
+
+    for step in 0..total_tickets {
+        let candidate_idx = (initial_index + step) % total_tickets;
+        if let Some(owner) = get_ticket_owner(env, candidate_idx + 1) {
+            let mut already_won = false;
+            for w in winners.iter() {
+                if w == owner {
+                    already_won = true;
+                    break;
+                }
+            }
+            if !already_won {
+                return candidate_idx;
+            }
+        }
+    }
+
+    initial_index
+}
 /// Finalize the raffle using a pre-computed `u64` seed.
 ///
 /// This is the common finalization path shared by all three randomness modes
