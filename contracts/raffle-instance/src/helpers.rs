@@ -1,7 +1,7 @@
 use soroban_sdk::{auth::InvokerContractAuthEntry, Address, BytesN, Env, IntoVal, Symbol, Val, Vec, token};
 
 use crate::events::{RaffleFinalized, RaffleStatusChanged, WinnerDrawn};
-use crate::randomness::{OracleSeedWinnerSelection, WinnerSelectionStrategy};
+use crate::randomness::OracleSeedWinnerSelection;
 use crate::{DataKey, Error, FairnessMetadata, Raffle, RaffleStatus, RandomnessType, Ticket};
 
 pub(crate) fn read_raffle(env: &Env) -> Result<Raffle, Error> {

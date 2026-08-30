@@ -32,9 +32,7 @@ use raffle_shared::{
     RandomnessSource, RandomnessType, Ticket, Winner,
 };
 
-use self::randomness::{
-    build_vrf_proof_message, OracleSeedWinnerSelection, WinnerSelectionStrategy,
-};
+use self::randomness::build_vrf_proof_message;
 
 use crate::events::{
     CancelScheduled, ContractPaused, ContractUnpaused, DrawTriggered, EmergencyWithdrawn,
