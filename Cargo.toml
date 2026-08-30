@@ -10,7 +10,8 @@ rust-version = "1.70"
 
 
 [workspace.dependencies]
-soroban-sdk = "23"
+# Pin to soroban SDK version compatible with soroban-env-host
+soroban-sdk = "=28.0.0-rc.1"
 
 [profile.release]
 opt-level = "z"
@@ -25,4 +26,5 @@ lto = "fat"
 # For more information about this profile see https://soroban.stellar.org/docs/basic-tutorials/logging#cargotoml-profile
 [profile.release-with-logs]
 inherits = "release"
-debug-assertions = true
+
+

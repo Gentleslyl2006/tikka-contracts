@@ -218,6 +218,9 @@ pub struct RaffleConfig {
     /// Seconds after finalization before winners may claim.
     /// Must be in [0, 604800] (0 to 7 days). Defaults to 3600 (1 hour) if not provided (None).
     pub claim_lockup_seconds: Option<u64>,
+    /// Seconds after finalization before prizes may be swept to treasury if
+    /// unclaimed. Defaults to `DEFAULT_CLAIM_EXPIRY_SECONDS` when `None`.
+    pub claim_expiry_seconds: Option<u64>,
     /// Swap deadline window in seconds (added to current timestamp for token swaps).
     /// Defaults to 300 (5 minutes) if not provided (None). Configurable to handle network congestion.
     pub swap_deadline_seconds: Option<u64>,
@@ -254,6 +257,9 @@ impl RaffleConfig {
         if self.claim_lockup_seconds.is_none() {
             self.claim_lockup_seconds = Some(DEFAULT_CLAIM_LOCKUP_SECONDS);
         }
+        if self.claim_expiry_seconds.is_none() {
+            self.claim_expiry_seconds = Some(DEFAULT_CLAIM_EXPIRY_SECONDS);
+        }
         if self.swap_deadline_seconds.is_none() {
             self.swap_deadline_seconds = Some(DEFAULT_SWAP_DEADLINE_SECONDS);
         }
@@ -281,6 +287,15 @@ pub struct Ticket {
     pub ticket_number: u32,
     /// The address that paid for this ticket.
     pub payer: Address,
+}
+
+/// Winner record stored in the unified winners list on a raffle instance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct Winner {
+    pub address: Address,
+    pub claimed: bool,
+    pub prize_index: u32,
 }
 
 impl Ticket {
@@ -315,6 +330,17 @@ pub struct FairnessData {
     pub draw_sequence: u32,
     /// Whether unique-address winner fairness was enabled for this draw (#485).
     pub unique_winners: bool,
+}
+
+/// Pricing breakdown for a prospective ticket purchase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct BuyQuote {
+    pub gross: i128,
+    pub discount: i128,
+    pub fee: i128,
+    pub net_to_pay: i128,
+    pub effective_ticket_price: i128,
 }
 
 /// Generic pagination request for list queries.
@@ -380,6 +406,7 @@ pub use constants::{
     DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_PAGE_LIMIT, DEFAULT_SWAP_DEADLINE_SECONDS,
     MAX_PAGE_LIMIT,
 };
+pub use constants::{DEFAULT_CLAIM_EXPIRY_SECONDS, MIN_CLAIM_EXPIRY_SECONDS};
 
 /// Returns a safe pagination limit clamped to supported bounds.
 pub fn effective_limit(requested: u32) -> u32 {

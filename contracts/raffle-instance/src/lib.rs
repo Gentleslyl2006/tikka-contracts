@@ -19,7 +19,17 @@ mod randomness;
 mod tickets;
 mod views;
 
+use crate::views::RaffleStats;
+
 pub(crate) use helpers::do_finalize_with_seed;
+pub(crate) use helpers::{
+    read_raffle, write_raffle, require_global_not_paused, require_not_paused,
+    validate_token_address, transition_status, bump_raffle_ttl, get_ticket_owner,
+    require_admin, acquire_guard, release_guard, Guard,
+};
+pub(crate) use helpers::{
+    calculate_tier_prize, request_randomness, transition_to_drawing,
+};
 
 use raffle_shared::{
     constants::{
@@ -29,7 +39,7 @@ use raffle_shared::{
         ORACLE_TIMEOUT_LEDGERS,
     },
     CancelReason, FailureReason, FairnessData, QuorumConfig, RaffleConfig, RaffleStatus,
-    RandomnessSource, RandomnessType, Ticket, Winner,
+    RandomnessSource, RandomnessType, Ticket, Winner, BuyQuote,
 };
 
 use self::randomness::{
@@ -43,6 +53,7 @@ use crate::events::{
     RaffleFinalized, RaffleStatusChanged, RandomnessFallbackTriggered, RandomnessReceived,
     RandomnessRequested, StorageWiped, SwapDeadlineUpdated, TicketNftMinted, TicketPurchased,
     TicketRefunded, TicketSalesPaused, TicketSalesResumed, TokensRescued, WinnerDrawn,
+    OracleSeedDelivered,
 };
 
 const RANDOMNESS_MIN_DELAY_LEDGERS: u32 = 10;
@@ -84,6 +95,7 @@ pub struct Raffle {
     pub tikka_token: Option<Address>,
     pub finalized_at: Option<u64>,
     pub claim_lockup_seconds: u64,
+    pub claim_expiry_seconds: u64,
     pub swap_deadline_seconds: u64,
     pub ticket_sales_paused: bool,
     /// The percentage of max_tickets covered by the early bird discount (0 to disable).
@@ -114,6 +126,7 @@ pub enum DataKey {
     Ticket(u32),
     TicketRefunded(u32),
     Factory,
+    MetadataHash,
     ReentrancyGuard,
     Paused,
     Admin,
@@ -196,12 +209,14 @@ pub enum Error {
     InvalidEndTime = 62,
     InvalidAdminAddress = 63,
     RandomnessTooEarly = 64,
-    CancelTimelockActive = 65,
+    OracleNotRegistered = 68,
+    DuplicateOracleSubmission = 69,
+    CancelTimelockActive = 67,
     CancelNotScheduled = 66,
 }
 
 #[contractimpl]
-impl Contract {
+impl RaffleInstance {
     pub fn init(
         env: Env,
         factory: Address,
@@ -329,12 +344,12 @@ if config.randomness_source == RandomnessSource::External {
         let config = config.resolve_defaults();
 
         // #259: claim_lockup_seconds must be within [0, MAX_CLAIM_LOCKUP_SECONDS].
-        if config.claim_lockup_seconds > MAX_CLAIM_LOCKUP_SECONDS {
+        if config.claim_lockup_seconds.unwrap() > MAX_CLAIM_LOCKUP_SECONDS {
             return Err(Error::InvalidParameters);
         }
 
         // Swap deadline must be within [0, MAX_SWAP_DEADLINE_SECONDS].
-        if config.swap_deadline_seconds > MAX_SWAP_DEADLINE_SECONDS {
+        if config.swap_deadline_seconds.unwrap() > MAX_SWAP_DEADLINE_SECONDS {
             return Err(Error::InvalidParameters);
         }
 
@@ -372,8 +387,9 @@ if config.randomness_source == RandomnessSource::External {
             swap_router: config.swap_router,
             tikka_token: config.tikka_token,
             finalized_at: None,
-            claim_lockup_seconds: config.claim_lockup_seconds,
-            swap_deadline_seconds: config.swap_deadline_seconds,
+            claim_lockup_seconds: config.claim_lockup_seconds.unwrap(),
+            claim_expiry_seconds: config.claim_expiry_seconds.unwrap(),
+            swap_deadline_seconds: config.swap_deadline_seconds.unwrap(),
             ticket_sales_paused: false,
             early_bird_ticket_percentage: config.early_bird_ticket_percentage,
             early_bird_discount_bp: config.early_bird_discount_bp,
@@ -451,6 +467,7 @@ if config.randomness_source == RandomnessSource::External {
     /// aggregated via `aggregate_quorum_seeds` and the raffle is finalized.
     pub fn provide_quorum_randomness(
         env: Env,
+        caller: Address,
         random_seed: u64,
         request_id: u64,
     ) -> Result<(), Error> {
@@ -463,9 +480,6 @@ if config.randomness_source == RandomnessSource::External {
             return Err(Error::DrawingAlreadyComplete);
         }
 
-        let caller = env
-            .invoker()
-            .expect("provide_quorum_randomness: invoker required");
         caller.require_auth();
 
         let raffle = read_raffle(&env)?;
@@ -757,7 +771,6 @@ if config.randomness_source == RandomnessSource::External {
         Err(Error::InvalidParameters)
     }
 
-}
 
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
     /// from being archived by Soroban's TTL expiry.

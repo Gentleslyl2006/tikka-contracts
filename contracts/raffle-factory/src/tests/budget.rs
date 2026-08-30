@@ -80,6 +80,7 @@ fn test_config(env: &Env, payment_token: &Address) -> RaffleConfig {
         tikka_token: None,
         metadata_hash: BytesN::from_array(env, &[1u8; 32]),
         claim_lockup_seconds: None,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: None,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,

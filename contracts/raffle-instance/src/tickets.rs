@@ -193,6 +193,9 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         .ok_or(Error::ArithmeticOverflow)?
         / 10000;
 
+    let quote = calculate_buy_quote(&raffle, quantity)?;
+    let effective_price = quote.effective_ticket_price;
+
     let persisted = crate::read_raffle(&env)?;
     let persisted_sold = persisted.tickets_sold;
     let persisted_count: u32 = env
@@ -234,6 +237,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
             owner: buyer.clone(),
             purchase_time: timestamp,
             ticket_number: ticket_id,
+            payer: buyer.clone(),
         };
         env.storage()
             .persistent()

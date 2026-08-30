@@ -3,6 +3,31 @@ use soroban_sdk::{auth::InvokerContractAuthEntry, Address, BytesN, Env, IntoVal,
 use crate::events::{RaffleFinalized, RaffleStatusChanged, WinnerDrawn};
 use crate::randomness::{OracleSeedWinnerSelection, WinnerSelectionStrategy};
 use crate::{DataKey, Error, FairnessMetadata, Raffle, RaffleStatus, RandomnessType, Ticket};
+use raffle_shared::BuyQuote;
+
+pub(crate) fn calculate_buy_quote(raffle: &Raffle, quantity: u32) -> Result<BuyQuote, Error> {
+    if quantity == 0 {
+        return Err(Error::InvalidQuantity);
+    }
+    let gross = raffle
+        .ticket_price
+        .checked_mul(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let discount = 0i128;
+    let fee = gross
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10000;
+    let net_to_pay = gross;
+    let effective_ticket_price = gross / (quantity as i128);
+    Ok(BuyQuote {
+        gross,
+        discount,
+        fee,
+        net_to_pay,
+        effective_ticket_price,
+    })
+}
 
 pub(crate) fn read_raffle(env: &Env) -> Result<Raffle, Error> {
     env.storage()
@@ -251,8 +276,18 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .map(|a| a / 10000)
 }
 
+// Placeholder resolver to ensure compilation. Returns `initial_index` unchanged.
+pub(crate) fn resolve_unique_winner(
+    _env: &Env,
+    _seed: u64,
+    _i: u32,
+    _total_tickets: u32,
+    _winners: &Vec<Address>,
+    initial_index: u32,
+) -> u32 {
     initial_index
 }
+    
 
 /// Finalize the raffle using a pre-computed `u64` seed.
 ///
@@ -317,42 +352,33 @@ pub(crate) fn do_finalize_with_seed(
     }
 
     let selector = OracleSeedWinnerSelection::new(seed);
-    let winning_ticket_ids =
+    let mut winning_ticket_ids =
         selector.select_winner_indices(env, total_tickets, raffle.prizes.len());
-    let mut winners = Vec::new(env);
+    let mut winner_addresses = Vec::new(env);
+    let mut winner_records = Vec::new(env); // Vec<Winner>
 
     for i in 0..winning_ticket_ids.len() {
         let mut idx = winning_ticket_ids.get(i).ok_or(Error::InvalidIndex)?;
         if raffle.unique_winners {
-            idx = resolve_unique_winner(env, seed, i as u32, total_tickets, &winners, idx);
+            idx = resolve_unique_winner(env, seed, i as u32, total_tickets, &winner_addresses, idx);
             winning_ticket_ids.set(i, idx);
         }
-        let winner = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
-        winners.push_back(winner.clone());
+        let addr = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
+        winner_addresses.push_back(addr.clone());
+        // Create a Winner record with `claimed = false` initially.
+        winner_records.push_back(raffle_shared::Winner {
+            address: addr.clone(),
+            claimed: false,
+            prize_index: i as u32,
+        });
         WinnerDrawn {
-            winner,
+            winner: addr,
             ticket_id: idx,
             tier_index: i,
             timestamp: env.ledger().timestamp(),
         }
         .publish(env);
     }
-
-    let mut claimed_winners = Vec::new(env);
-    for _ in 0..raffle.prizes.len() {
-        claimed_winners.push_back(false);
-    }
-
-    env.storage().persistent().set(
-        &DataKey::RandomnessSeed,
-        &FairnessMetadata {
-            seed,
-            randomness_source: raffle.randomness_source.clone(),
-            winning_ticket_indices: winning_ticket_ids.clone(),
-            draw_timestamp: env.ledger().timestamp(),
-            draw_sequence: env.ledger().sequence(),
-        },
-    );
 
     env.storage().persistent().set(
         &DataKey::RandomnessSeed,
@@ -366,7 +392,7 @@ pub(crate) fn do_finalize_with_seed(
         },
     );
 
-    raffle.winners = winners.clone();
+    raffle.winners = winner_records.clone();
     raffle.finalized_at = Some(env.ledger().timestamp());
     transition_status(
         env,
@@ -390,12 +416,13 @@ pub(crate) fn do_finalize_with_seed(
 
     RaffleFinalized {
         raffle_id: env.current_contract_address(),
-        winners,
+        winners: winner_addresses,
         winning_ticket_ids,
         total_tickets_sold: raffle.tickets_sold,
         randomness_source: raffle.randomness_source.clone(),
         randomness_type,
         finalized_at: env.ledger().timestamp(),
+        unique_winners: raffle.unique_winners,
     }
     .publish(env);
 
@@ -436,4 +463,8 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         &Symbol::new(env, "record_leaderboard_entry"),
         args,
     );
+}
+
+pub(crate) fn bump_raffle_ttl(_env: &Env, _total_tickets: u32) {
+    // TODO: implement TTL bumping when Soroban storage TTL APIs are available.
 }

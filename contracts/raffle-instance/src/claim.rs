@@ -38,7 +38,7 @@ pub(crate) fn claim_prize(env: Env, winner: Address, tier_index: u32) -> Result<
         return Err(Error::InsufficientFunds);
     }
 
-    raffle.claimed_winners.set(tier_index, true);
+    raffle.winners.set(tier_index, Winner { address: entry.address.clone(), claimed: true, prize_index: entry.prize_index });
 
     let all_claimed = raffle.winners.iter().all(|w| w.claimed);
     if all_claimed {

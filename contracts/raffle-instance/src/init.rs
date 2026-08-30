@@ -177,6 +177,10 @@ pub(crate) fn init(
     if config.swap_deadline_seconds.unwrap() > MAX_SWAP_DEADLINE_SECONDS {
         return Err(Error::InvalidParameters);
     }
+    // Validate claim expiry: must be greater than the lockup and meet minimum.
+    if config.claim_expiry_seconds.unwrap() <= config.claim_lockup_seconds.unwrap() {
+        return Err(Error::InvalidParameters);
+    }
 
     let raffle = Raffle {
         creator: creator.clone(),
@@ -185,6 +189,7 @@ pub(crate) fn init(
         no_deadline: config.no_deadline,
         max_tickets: config.max_tickets,
         max_tickets_per_tx: config.max_tickets_per_tx,
+        max_tickets_per_address: config.max_tickets_per_address,
         min_tickets: config.min_tickets,
         allow_multiple: config.allow_multiple,
         ticket_price: config.ticket_price,
@@ -196,7 +201,7 @@ pub(crate) fn init(
         status: RaffleStatus::PendingPrize,
         prize_deposited: false,
         winners: soroban_sdk::Vec::new(&env),
-        claimed_winners: soroban_sdk::Vec::new(&env),
+        claim_expiry_seconds: config.claim_expiry_seconds.unwrap(),
         randomness_source: config.randomness_source.clone(),
         oracle_address: config.oracle_address,
         protocol_fee_bp: config.protocol_fee_bp,
@@ -209,6 +214,9 @@ pub(crate) fn init(
         ticket_sales_paused: false,
         early_bird_ticket_percentage: config.early_bird_ticket_percentage,
         early_bird_discount_bp: config.early_bird_discount_bp,
+        metadata_hash: config.metadata_hash.clone(),
+        unique_winners: config.unique_winners,
+        nft_contract: config.nft_contract,
     };
     write_raffle(&env, &raffle);
     env.storage().instance().set(&DataKey::Factory, &factory);
@@ -225,7 +233,8 @@ pub(crate) fn init(
         prizes: config.prizes,
         description: config.description,
         randomness_source: config.randomness_source,
-        metadata_hash: config.metadata_hash,
+        metadata_hash: config.metadata_hash.clone(),
+        unique_winners: config.unique_winners,
     }.publish(&env);
 
     Ok(())

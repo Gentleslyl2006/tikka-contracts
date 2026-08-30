@@ -95,6 +95,7 @@ fn test_oracle_fallback_with_ledger_delays() {
         unique_winners: false,
         metadata_hash: BytesN::from_array(&env, &[1; 32]),
         claim_lockup_seconds: None,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: None,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -200,6 +201,7 @@ fn test_admin_updates_oracle_address() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[2; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -211,7 +213,6 @@ fn test_admin_updates_oracle_address() {
     let raffle = client.get_raffle();
     assert_eq!(raffle.claim_lockup_seconds, DEFAULT_CLAIM_LOCKUP_SECONDS);
     assert_eq!(raffle.swap_deadline_seconds, DEFAULT_SWAP_DEADLINE_SECONDS);
-}
 
     client.update_oracle_address(&new_oracle);
 
@@ -254,10 +255,12 @@ fn test_admin_sets_protocol_fee_before_sales() {
         tikka_token: None,
         metadata_hash: BytesN::from_array(&env, &[3; 32]),
         claim_lockup_seconds: None,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: None,
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[3; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -316,10 +319,12 @@ fn non_winner_cannot_claim() {
         tikka_token: None,
         metadata_hash: BytesN::from_array(&env, &[1u8; 32]),
         claim_lockup_seconds: None,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: None,
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[1u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -385,6 +390,7 @@ fn buy_tickets_rejects_quantity_above_per_tx_cap() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[5u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -442,6 +448,7 @@ fn buy_tickets_rejects_overflowing_total_price_without_wrapping() {
         tikka_token: None,
         metadata_hash: BytesN::from_array(&env, &[77u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -512,6 +519,7 @@ fn setup_scale_raffle(
         tikka_token: None,
         metadata_hash: BytesN::from_array(env, &[88u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -672,6 +680,7 @@ fn setup_active_raffle(
         unique_winners: false,
             metadata_hash: BytesN::from_array(env, &[7u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -715,6 +724,7 @@ fn pause_resume_ticket_sales_controls_buy_tickets() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -792,6 +802,7 @@ fn test_wipe_storage_removes_all_keys() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[9u8; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -885,6 +896,7 @@ fn emergency_withdraw_fails_before_delay_in_finalized_state() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[9; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -941,6 +953,7 @@ fn emergency_withdraw_rejects_finalized_state_after_delay() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[10; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -1005,6 +1018,7 @@ fn emergency_withdraw_fails_for_no_deadline_raffle_before_timeout() {
         oracle_address: Some(oracle.clone()),
         metadata_hash: BytesN::from_array(&env, &[11; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -1170,6 +1184,7 @@ fn emergency_withdraw_fails_in_cancelled_state() {
         tikka_token: None,
         metadata_hash: BytesN::from_array(&env, &[14; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -1645,6 +1660,7 @@ fn prize_distribution_invariant_holds_for_multiple_tiers() {
                 unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[33; 32]),
                 claim_lockup_seconds: 0,
+                claim_expiry_seconds: None,
                 swap_deadline_seconds: 0,
             };
 
@@ -1669,8 +1685,6 @@ fn prize_distribution_invariant_holds_for_multiple_tiers() {
 
             let raffle = client.get_raffle();
             let mut total_claimed = 0i128;
-            for i in 0..raffle.winners.len() {
-                let winner = raffle.winners.get(i).unwrap();
             let mut fee_from_prize = 0i128;
             let winners = raffle.winners;
             for tier_idx in 0..tiers_count {
@@ -1824,6 +1838,7 @@ fn commit_reveal_preserves_entropy_after_ticket_transfer() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[46; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -1903,6 +1918,7 @@ fn commit_reveal_with_zero_commits_falls_back_to_prng() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[47; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -1973,6 +1989,7 @@ fn drawing_lock_cleared_after_internal_finalize() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[48; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         bundles: soroban_sdk::vec![&env],
     };
@@ -2015,6 +2032,7 @@ fn test_init_claim_lockup_seconds_at_bound_succeeds() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[49; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -2080,6 +2098,7 @@ fn drawing_lock_cleared_after_fallback_refund() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[50; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,
@@ -2121,6 +2140,7 @@ fn test_init_claim_lockup_seconds_above_bound_rejected() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[51; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -2170,6 +2190,7 @@ fn drawing_lock_cleared_after_cancel_in_drawing_state() {
         unique_winners: false,
             metadata_hash: BytesN::from_array(&env, &[52; 32]),
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
         swap_deadline_seconds: 0,
     };
 
@@ -2560,6 +2581,138 @@ fn init_bounds_config(
 fn assert_metadata_hash(client: &ContractClient<'_>, expected: &BytesN<32>) {
     let raffle = client.get_raffle().unwrap();
     assert_eq!(raffle.metadata_hash, *expected);
+}
+
+#[test]
+fn double_claim_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let factory = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let payment_token = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_client = StellarAssetClient::new(&env, &payment_token);
+    token_client.mint(&creator, &1_000_000);
+    token_client.mint(&buyer, &1_000_000);
+
+    let config = RaffleConfig {
+        description: String::from_str(&env, "Double claim test"),
+        end_time: 0,
+        no_deadline: true,
+        max_tickets: 1,
+        max_tickets_per_tx: 1,
+        min_tickets: 1,
+        allow_multiple: true,
+        ticket_price: MIN_TICKET_PRICE,
+        payment_token: payment_token.clone(),
+        prize_amount: MIN_TICKET_PRICE * 10,
+        prizes: soroban_sdk::vec![&env, 10000],
+        randomness_source: RandomnessSource::Internal,
+        oracle_address: None,
+        protocol_fee_bp: 0,
+        treasury_address: None,
+        swap_router: None,
+        tikka_token: None,
+        metadata_hash: BytesN::from_array(&env, &[2u8; 32]),
+        claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
+        swap_deadline_seconds: 0,
+        early_bird_ticket_percentage: 0,
+        early_bird_discount_bp: 0,
+        category: None,
+        unique_winners: false,
+    };
+
+    client.init(&factory, &admin, &creator, &config);
+    client.deposit_prize();
+    client.buy_tickets(&buyer, &1);
+    client.finalize_raffle();
+
+    env.ledger().set_timestamp(1_000 + DEFAULT_CLAIM_LOCKUP_SECONDS + 1);
+
+    let winner = client.get_raffle().winners.get(0).unwrap();
+    // First claim succeeds
+    let _ = client.claim_prize(&winner, &0u32);
+    // Second claim should be rejected
+    let res = client.try_claim_prize(&winner, &0u32);
+    assert_eq!(res.err(), Some(Ok(Error::PrizeAlreadyClaimed)));
+}
+
+#[test]
+fn all_tiers_claimed_transitions_to_claimed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let factory = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let payment_token = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_client = StellarAssetClient::new(&env, &payment_token);
+    token_client.mint(&creator, &1_000_000);
+    token_client.mint(&buyer_a, &1_000_000);
+    token_client.mint(&buyer_b, &1_000_000);
+
+    let config = RaffleConfig {
+        description: String::from_str(&env, "All tiers claimed"),
+        end_time: 0,
+        no_deadline: true,
+        max_tickets: 2,
+        max_tickets_per_tx: 2,
+        min_tickets: 1,
+        allow_multiple: true,
+        ticket_price: MIN_TICKET_PRICE,
+        payment_token: payment_token.clone(),
+        prize_amount: MIN_TICKET_PRICE * 20,
+        prizes: soroban_sdk::vec![&env, 10000, 10000],
+        randomness_source: RandomnessSource::Internal,
+        oracle_address: None,
+        protocol_fee_bp: 0,
+        treasury_address: None,
+        swap_router: None,
+        tikka_token: None,
+        metadata_hash: BytesN::from_array(&env, &[3u8; 32]),
+        claim_lockup_seconds: 0,
+        claim_expiry_seconds: None,
+        swap_deadline_seconds: 0,
+        early_bird_ticket_percentage: 0,
+        early_bird_discount_bp: 0,
+        category: None,
+        unique_winners: false,
+    };
+
+    client.init(&factory, &admin, &creator, &config);
+    client.deposit_prize();
+    client.buy_tickets(&buyer_a, &1);
+    client.buy_tickets(&buyer_b, &1);
+    client.finalize_raffle();
+
+    env.ledger().set_timestamp(1_000 + DEFAULT_CLAIM_LOCKUP_SECONDS + 1);
+
+    let raffle = client.get_raffle();
+    let winners = raffle.winners.clone();
+    for i in 0..winners.len() {
+        let w = winners.get(i).unwrap();
+        let _ = client.claim_prize(&w, &(i as u32));
+    }
+
+    let raffle_after = client.get_raffle();
+    assert_eq!(raffle_after.status, RaffleStatus::Claimed);
 }
 
 fn init_bounds_env() -> (Env, Address, Address, Address, Address, Address) {

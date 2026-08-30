@@ -34,6 +34,7 @@ pub fn setup(env: &Env, max_tickets: u32) -> (ContractClient<'_>, Address, Addre
         tikka_token: None,
         metadata_hash: BytesN::from_array(env, &[1; 32]),
         claim_lockup_seconds: Some(0),
+        claim_expiry_seconds: None,
         swap_deadline_seconds: Some(0),
         early_bird_ticket_percentage: 0,
         early_bird_discount_bp: 0,

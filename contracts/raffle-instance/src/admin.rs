@@ -5,11 +5,11 @@ use raffle_shared::CancelReason;
 use crate::events::{
     ContractPaused, ContractUnpaused, EmergencyWithdrawn, FeesWithdrawn, OracleAddressUpdated,
     ProtocolFeeUpdated, RaffleCancelled, StorageWiped, SwapDeadlineUpdated, TicketSalesPaused,
-    TicketSalesResumed, TokensRescued,
+    TicketSalesResumed, TokensRescued, DustSwept,
 };
 use crate::{
     calculate_tier_prize, read_raffle, require_admin, write_raffle, DataKey, Error, RaffleStatus,
-    EMERGENCY_WITHDRAW_DELAY_SECONDS, MAX_PROTOCOL_FEE_BP, MAX_SWAP_DEADLINE_SECONDS,
+    transition_status, EMERGENCY_WITHDRAW_DELAY_SECONDS, MAX_PROTOCOL_FEE_BP, MAX_SWAP_DEADLINE_SECONDS,
 };
 
 fn outstanding_ticket_refunds(env: &Env, raffle: &crate::Raffle) -> Result<i128, Error> {
@@ -380,6 +380,7 @@ pub(crate) fn sweep_dust(env: Env) -> Result<(), Error> {
 
     let treasury = raffle
         .treasury_address
+        .clone()
         .ok_or(Error::InvalidParameters)?;
 
     let token_client = token::Client::new(&env, &raffle.payment_token);

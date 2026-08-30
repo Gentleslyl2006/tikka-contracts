@@ -14,12 +14,24 @@
 //! | [`is_ticket_sales_paused`] | Whether ticket sales are paused within an active raffle |
 //! | [`get_accumulated_fees`] | Protocol fees collected but not yet withdrawn |
 
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use raffle_shared::{BuyQuote, FairnessData};
 
 use crate::helpers::calculate_buy_quote;
 use crate::{read_raffle, DataKey, Error, FairnessMetadata};
+
+#[derive(Clone)]
+#[contracttype]
+pub struct RaffleStats {
+    pub tickets_sold: u32,
+    pub unique_buyers: u32,
+    pub gross_revenue: i128,
+    pub fees_accrued: i128,
+    pub prize_funded: bool,
+    pub status: crate::RaffleStatus,
+    pub time_remaining: u64,
+}
 
 /// Return the full [`Raffle`](crate::Raffle) struct from instance storage.
 ///

@@ -45,6 +45,14 @@ pub const MAX_CLAIM_LOCKUP_SECONDS: u64 = 604_800;
 /// token-swap transactions.  Equals 5 minutes.
 pub const DEFAULT_SWAP_DEADLINE_SECONDS: u64 = 300;
 
+/// Default window (seconds) after finalization when prizes may be swept to
+/// treasury if unclaimed. Defaults to 1 day (86 400 s).
+pub const DEFAULT_CLAIM_EXPIRY_SECONDS: u64 = 86_400;
+
+/// Minimum allowed claim expiry. Must be greater than the claim lockup
+/// delay to ensure winners always have an opportunity to claim.
+pub const MIN_CLAIM_EXPIRY_SECONDS: u64 = DEFAULT_CLAIM_LOCKUP_SECONDS + 1;
+
 /// Upper bound on the swap deadline window (1 hour).
 pub const MAX_SWAP_DEADLINE_SECONDS: u64 = 3_600;
 

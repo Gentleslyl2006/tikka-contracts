@@ -47,6 +47,7 @@ fn test_raffle(env: &Env, weights: &[u32], prize_amount: i128) -> Raffle {
         tikka_token: None,
         finalized_at: None,
         claim_lockup_seconds: 0,
+        claim_expiry_seconds: 0,
         swap_deadline_seconds: 0,
         ticket_sales_paused: false,
         early_bird_ticket_percentage: 0,
