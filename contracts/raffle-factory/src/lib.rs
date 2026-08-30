@@ -10,6 +10,7 @@ use soroban_sdk::{
 use soroban_sdk::testutils::Address as _;
 
 mod events;
+mod views;
 
 use raffle_shared::{
     effective_limit, AdminOp, FairnessData, PageResultRaffles, PaginationParams, RaffleConfig,
@@ -347,7 +348,7 @@ fn maybe_create_checkpoint(env: &Env, raffle_count: u32) {
 ///
 /// `nonce` is the factory's [`DataKey::NextRaffleId`] at creation time (see
 /// [`RaffleFactory::get_next_raffle_id`] / [`RaffleFactory::predict_raffle_address`]).
-fn compute_raffle_salt(env: &Env, creator: &Address, nonce: u64) -> BytesN<32> {
+pub(crate) fn compute_raffle_salt(env: &Env, creator: &Address, nonce: u64) -> BytesN<32> {
     let payload = (creator.clone(), nonce).to_xdr(env);
     env.crypto().sha256(&payload).into()
 }
@@ -1177,100 +1178,11 @@ impl RaffleFactory {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Return a snapshot of key factory metrics.
-    ///
-    /// This is a read-only call with no auth requirement. All fields default to
-    /// zero/false when the factory has just been initialized and no raffles have
-    /// been created.
-    pub fn get_protocol_stats(env: Env) -> ProtocolStats {
-        let total_raffles_created: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalRafflesCreated)
-            .unwrap_or(0);
-        let protocol_fee_bp: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ProtocolFeeBP)
-            .unwrap_or(0);
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        let total_unique_participants: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalUniqueParticipants)
-            .unwrap_or(0);
 
-        ProtocolStats {
-            total_raffles_created,
-            protocol_fee_bp,
-            paused,
-            total_unique_participants,
-        }
-    }
 
-    /// O(1) direct lookup of a raffle address by its stable ID.
-    /// Returns `None` if the ID was never assigned or has been cleaned up.
-    pub fn get_raffle_by_id(env: Env, raffle_id: u32) -> Option<Address> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RaffleById(raffle_id))
-    }
 
-    /// Returns the stable ID that will be assigned to the next raffle.
-    /// IDs in [0, next_raffle_id) have been assigned at least once.
-    ///
-    /// Pass this value as `nonce` to [`predict_raffle_address`](Self::predict_raffle_address)
-    /// to precompute the instance address for the next [`create_raffle`](Self::create_raffle).
-    pub fn get_next_raffle_id(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::NextRaffleId)
-            .unwrap_or(0u32)
-    }
 
-    /// Predict the deterministic contract address for a raffle before deployment.
-    ///
-    /// The address is derived from this factory's address and
-    /// `SHA-256(XDR(creator) ‖ XDR(nonce))` via
-    /// [`Env::deployer`]`.`with_current_contract`.
-    ///
-    /// For the next raffle a creator will receive, use
-    /// `nonce = get_next_raffle_id() as u64`.
-    ///
-    /// # Parameters
-    ///
-    /// - `creator` — Address that will create the raffle.
-    /// - `nonce` — Deployment salt input; must match the factory's
-    ///   [`get_next_raffle_id`](Self::get_next_raffle_id) at `create_raffle` time.
-    pub fn predict_raffle_address(env: Env, creator: Address, nonce: u64) -> Address {
-        let salt = compute_raffle_salt(&env, &creator, nonce);
-        env.deployer()
-            .with_current_contract(salt)
-            .deployed_address()
-    }
 
-    /// Returns the current count of live (non-tombstoned) raffles.
-    pub fn get_raffle_count(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RaffleCount)
-            .unwrap_or(0u32)
-    }
-
-    /// Return the cumulative ticket-sale volume for a specific `asset` token.
-    ///
-    /// Returns `0` when no volume has been recorded for `asset`. No auth
-    /// required.
-    pub fn get_total_volume(env: Env, asset: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TotalVolumePerAsset(asset))
-            .unwrap_or(0)
-    }
 
     /// Accumulate `amount` into the running volume counter for `asset`.
     ///
@@ -1303,177 +1215,9 @@ impl RaffleFactory {
         Ok(())
     }
 
-    /// Return the current admin address.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::NotAuthorized`] — admin key is missing (factory not
-    ///   initialized).
-    pub fn get_admin(env: Env) -> Result<Address, ContractError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ContractError::NotAuthorized)
-    }
 
-    /// Return a paginated slice of all live raffle addresses.
-    ///
-    /// Iterates over the stable-ID space `[offset, offset + limit)` and
-    /// returns only slots that still hold a live address (tombstoned entries
-    /// from [`clean_old_raffle`](Self::clean_old_raffle) are silently skipped).
-    /// Each iteration step is a single O(1) storage lookup.
-    ///
-    /// # Parameters
-    ///
-    /// - `params.offset` — First stable-ID to include. Acts as a cursor into
-    ///   the ever-increasing ID space (not the live-raffle count).
-    /// - `params.limit` — Maximum results per page. Clamped to
-    ///   `[1, MAX_PAGE_LIMIT]`; `0` uses `DEFAULT_PAGE_LIMIT` (100).
-    ///
-    /// # Returns
-    ///
-    /// A [`PageResultRaffles`] whose `total` field reflects the number of
-    /// **live** raffles (not the total IDs ever assigned), and `has_more` is
-    /// `true` when the stable-ID space extends beyond the returned window.
-    pub fn get_raffles_page(env: Env, params: PaginationParams) -> PageResultRaffles {
-        // `NextRaffleId` is the exclusive upper bound on all ever-assigned IDs.
-        // It equals the total number of raffles ever created (including any that
-        // have been cleaned up / tombstoned).
-        let next_id: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::NextRaffleId)
-            .unwrap_or(0u32);
 
-        let lim = effective_limit(params.limit);
-        let offset = params.offset;
 
-        // `total` here is the live-raffle count (tombstoned entries excluded),
-        // reported to the caller for UI pagination purposes.
-        let total: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RaffleCount)
-            .unwrap_or(0u32);
-
-        if offset >= next_id {
-            return PageResultRaffles {
-                items: Vec::new(&env),
-                total,
-                has_more: false,
-            };
-        }
-
-        // Walk the stable ID space [offset, offset + lim) and collect only
-        // slots that still hold a live address (non-tombstoned).  Each read
-        // is a single O(1) storage lookup; the loop is bounded by `lim`.
-        let end = offset.saturating_add(lim).min(next_id);
-        let mut items: Vec<Address> = Vec::new(&env);
-        for id in offset..end {
-            if let Some(addr) = env
-                .storage()
-                .persistent()
-                .get::<_, Address>(&DataKey::RaffleById(id))
-            {
-                items.push_back(addr);
-            }
-        }
-
-        let has_more = end < next_id;
-        PageResultRaffles {
-            items,
-            total,
-            has_more,
-        }
-    }
-
-    /// Return a paginated list of raffle addresses created by `creator`.
-    ///
-    /// `params.offset` is an index into the creator's personal raffle list
-    /// (not the global stable-ID space).  `params.limit` is clamped by
-    /// `effective_limit` (1–200, default 100).
-    pub fn get_raffles_by_creator(
-        env: Env,
-        creator: Address,
-        params: PaginationParams,
-    ) -> PageResultRaffles {
-        let creator_raffles: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::CreatorRaffles(creator))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        let total = creator_raffles.len();
-        let lim = effective_limit(params.limit);
-        let offset = params.offset;
-
-        if offset >= total {
-            return PageResultRaffles {
-                items: Vec::new(&env),
-                total,
-                has_more: false,
-            };
-        }
-
-        let end = offset.saturating_add(lim).min(total);
-        let mut items: Vec<Address> = Vec::new(&env);
-        for i in offset..end {
-            if let Some(addr) = creator_raffles.get(i) {
-                items.push_back(addr);
-            }
-        }
-
-        let has_more = end < total;
-        PageResultRaffles {
-            items,
-            total,
-            has_more,
-        }
-    }
-
-    /// Return a paginated list of raffle addresses tagged with `category` (#439).
-    ///
-    /// `params.offset` is an index into the category's raffle list.
-    /// `params.limit` is clamped by `effective_limit` (1–200, default 100).
-    /// An unknown category simply yields an empty page.
-    pub fn get_raffles_by_category(
-        env: Env,
-        category: soroban_sdk::String,
-        params: PaginationParams,
-    ) -> PageResultRaffles {
-        let category_raffles: Vec<Address> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::CategoryRaffles(category))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        let total = category_raffles.len();
-        let lim = effective_limit(params.limit);
-        let offset = params.offset;
-
-        if offset >= total {
-            return PageResultRaffles {
-                items: Vec::new(&env),
-                total,
-                has_more: false,
-            };
-        }
-
-        let end = offset.saturating_add(lim).min(total);
-        let mut items: Vec<Address> = Vec::new(&env);
-        for i in offset..end {
-            if let Some(addr) = category_raffles.get(i) {
-                items.push_back(addr);
-            }
-        }
-
-        let has_more = end < total;
-        PageResultRaffles {
-            items,
-            total,
-            has_more,
-        }
-    }
 
     /// Pause the factory, blocking new raffle creation.
     ///
@@ -1589,16 +1333,7 @@ impl RaffleFactory {
         Ok(())
     }
 
-    pub fn get_checkpoint(env: Env, index: u32) -> Option<StateCheckpoint> {
-        env.storage().persistent().get(&DataKey::Checkpoint(index))
-    }
 
-    pub fn get_latest_checkpoint_index(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::LatestCheckpointIndex)
-            .unwrap_or(0u32)
-    }
 
     pub fn sync_admin(env: Env, instance_address: Address) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
@@ -1649,23 +1384,7 @@ impl RaffleFactory {
         Ok(())
     }
 
-    pub fn get_unique_participants(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TotalUniqueParticipants)
-            .unwrap_or(0)
-    }
 
-    pub fn get_raffle_fairness_data(
-        env: Env,
-        raffle_id: Address,
-    ) -> Result<FairnessData, ContractError> {
-        Ok(env.invoke_contract::<FairnessData>(
-            &raffle_id,
-            &Symbol::new(&env, "get_fairness_data"),
-            ().into_val(&env),
-        ))
-    }
 
     pub fn set_creation_delay(env: Env, delay_seconds: u64) -> Result<(), ContractError> {
         require_admin(&env)?;
@@ -2158,6 +1877,9 @@ impl RaffleFactory {
 mod tests {
     #[path = "tests/governance.rs"]
     mod governance;
+
+    #[path = "tests/views.rs"]
+    mod views;
 
     use super::*;
     use raffle_shared::{RandomnessSource, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
