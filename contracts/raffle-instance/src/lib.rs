@@ -384,10 +384,6 @@ if config.randomness_source == RandomnessSource::External {
         write_raffle(&env, &raffle);
         env.storage().instance().set(&DataKey::Factory, &factory);
         env.storage().instance().set(&DataKey::Admin, &admin);
-        // Store metadata hash for attestation verification
-        env.storage()
-            .persistent()
-            .set(&DataKey::MetadataHash, &config.metadata_hash);
 
         RaffleCreated {
             raffle_id: env.current_contract_address(),
