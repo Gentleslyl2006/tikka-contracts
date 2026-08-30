@@ -51,8 +51,3 @@ arbitrary     = { version = "1", features = ["derive"] }
 # Local contracts
 tikka-raffle-instance = { package = "raffle-instance", path = "../contracts/raffle-instance", features = ["std"] }
 soroban-sdk = { version = "23", features = ["testutils"] }
-
-[profile.release]
-# Optimisation level useful for fuzzing; debug info helps with crash reports
-opt-level = 3
-debug     = false
