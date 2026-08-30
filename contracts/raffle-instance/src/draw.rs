@@ -32,6 +32,11 @@ pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
     }
 
     let now = env.ledger().timestamp();
+    // end_time is an exclusive boundary: sales/finalization are gated on
+    // now < end_time, so the deadline is reached starting at now == end_time.
+    // Must stay in sync with the RaffleExpired checks in tickets.rs
+    // (buy_tickets, buy_tickets_for) and time_remaining in
+    // views.rs::get_stats. See docs/GLOSSARY.md § "End Time".
     let time_ended = !raffle.no_deadline && now >= raffle.end_time;
     let tickets_full = raffle.tickets_sold >= raffle.max_tickets;
 

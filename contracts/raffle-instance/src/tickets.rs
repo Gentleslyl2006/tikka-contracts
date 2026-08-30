@@ -337,6 +337,45 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     Ok(raffle.tickets_sold)
 }
 
+/// Purchase one or more raffle tickets on behalf of `recipient`, paid for by
+/// `buyer` (a "gift" purchase).
+///
+/// Shares most of [`buy_tickets`]'s validation, fee model, and automatic
+/// draw trigger — except `recipient` (not `buyer`) is the address credited
+/// with owning the tickets and checked against `max_tickets_per_address` /
+/// `allow_multiple`; `buyer` still pays and must authorize the call. Unlike
+/// [`buy_tickets`], this function does **not** check the factory-level
+/// global pause flag (`require_global_not_paused`) — only the per-raffle
+/// `ticket_sales_paused` flag is enforced here. This is pre-existing
+/// behavior, not part of the `end_time` fix below; see the raffle-wide
+/// pause note under `# Errors`.
+///
+/// # Auth
+///
+/// Requires authorization from `buyer`.
+///
+/// # Parameters
+///
+/// - `buyer` — Address paying `ticket_price * quantity`.
+/// - `recipient` — Address credited with the purchased tickets.
+/// - `quantity` — Number of tickets to purchase in this transaction.
+///
+/// # Returns
+///
+/// The new total number of tickets sold across the entire raffle after this
+/// purchase completes.
+///
+/// # Errors
+///
+/// Same error set as [`buy_tickets`] (minus the global-pause case noted
+/// above), with per-address checks evaluated against `recipient` instead of
+/// `buyer`. Notably:
+///
+/// - [`Error::RaffleExpired`] — deadline passed and `no_deadline` is false.
+///   `end_time` is an exclusive boundary: the deadline is reached starting
+///   at `ledger_timestamp == end_time` (see `docs/GLOSSARY.md` § "End Time").
+///
+/// See [`buy_tickets`] for the full error list and event documentation.
 pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quantity: u32) -> Result<u32, Error> {
     let drawing_lock: bool = env.storage().instance().get(&crate::DataKey::DrawingLock).unwrap_or(false);
     if drawing_lock {
@@ -361,7 +400,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     if !raffle.prize_deposited {
         return Err(Error::InvalidStateTransition);
     }
-    if !raffle.no_deadline && env.ledger().timestamp() > raffle.end_time {
+    if !raffle.no_deadline && env.ledger().timestamp() >= raffle.end_time {
         return Err(Error::RaffleExpired);
     }
 
