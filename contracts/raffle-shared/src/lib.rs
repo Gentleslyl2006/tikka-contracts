@@ -489,14 +489,19 @@ macro_rules! impl_require_not_paused {
 mod test {
     use super::*;
     use soroban_sdk::{Env, String, Address, BytesN, Vec};
+    /// Helper to construct a canonical test configuration with explicit documented defaults.
     fn default_config(env: &Env) -> RaffleConfig {
-        let payment_token = Address::from_string(&String::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"));
+        let payment_token = Address::from_string(&String::from_str(
+            env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ));
         RaffleConfig {
             description: String::from_str(env, "Test"),
             end_time: 0,
             no_deadline: true,
             max_tickets: 10,
             max_tickets_per_tx: 10,
+            // 0 = unlimited per-address ticket purchases in default test setup
             max_tickets_per_address: 0,
             min_tickets: 1,
             allow_multiple: true,
@@ -516,11 +521,27 @@ mod test {
             early_bird_ticket_percentage: 0,
             early_bird_discount_bp: 0,
             category: None,
+            // Default to false so an address can win multiple tiers unless unique winner mode is enabled
             unique_winners: false,
+            // Default to an empty vector; bundle pricing is optional and disabled by default
             bundles: Vec::new(env),
+            // Default to None; prize payout defaults to payment_token when prize_token is not overridden
             prize_token: None,
+            // Default to None; receipt NFT minting is opt-in and disabled by default
             nft_contract: None,
         }
+    }
+
+    #[test]
+    fn test_default_config_has_expected_defaults() {
+        let env = Env::default();
+        let config = default_config(&env);
+
+        assert_eq!(config.unique_winners, false);
+        assert!(config.bundles.is_empty());
+        assert_eq!(config.prize_token, None);
+        assert_eq!(config.nft_contract, None);
+        assert_eq!(config.max_tickets_per_address, 0);
     }
 
     #[test]
