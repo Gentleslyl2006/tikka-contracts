@@ -311,7 +311,9 @@ pub struct FairnessData {
     pub winning_ticket_indices: Vec<u32>,
     /// Unix timestamp when draw resolution occurred.
     pub draw_timestamp: u64,
-    /// Sequence counter for draws/re-draws within the raffle.
+    /// Ledger sequence number of the block in which the draw was finalized.
+    /// Recorded as `env.ledger().sequence()` at finalization so auditors can
+    /// cross-reference the draw with the canonical on-chain ledger.
     pub draw_sequence: u32,
     /// Whether unique-address winner fairness was enabled for this draw (#485).
     pub unique_winners: bool,

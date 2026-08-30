@@ -301,6 +301,27 @@ pub struct DrawAttestation {
 - **Error on early call**: Returns `Error::InvalidStatus` (23) if draw not complete
 - **Storage location**: Fairness metadata stored in persistent storage (`DataKey::RandomnessSeed`) so it survives ledger-entry expiry
 
+### What `get_fairness_data()` Exposes
+
+A verifier reads the stored fairness metadata through `get_fairness_data()`,
+which returns a `FairnessData` struct reconstructing the following fields from
+the persisted `FairnessMetadata` (`DataKey::RandomnessSeed`):
+
+| Field | Source in `FairnessMetadata` | What an auditor can assert |
+|---|---|---|
+| `seed` | `seed` | Re-derive winner indices from this seed |
+| `randomness_source` | `randomness_source` | Confirm which source (Internal/External/Quorum/CommitReveal) produced the seed |
+| `ticket_ids` | Rebuilt from `raffle.tickets_sold` (1..=N) | Confirm the exact ticket set in scope for the draw |
+| `winning_ticket_indices` | `winning_ticket_indices` | Cross-check against re-selected winners |
+| `draw_timestamp` | `draw_timestamp` | When the draw was resolved (`env.ledger().timestamp()`) |
+| `draw_sequence` | `draw_sequence` | The ledger sequence number of the finalizing block (`env.ledger().sequence()`); used to locate the finalize transaction on-chain |
+| `unique_winners` | `unique_winners` | Whether unique-address winner fairness (#485) was enforced for this draw |
+
+**One write per finalization.** `do_finalize_with_seed` writes this metadata
+exactly once per draw (see `contracts/raffle-instance/src/helpers.rs`). A
+verifier can therefore trust that the values reflect a single authoritative
+finalization, with no superseded intermediate write.
+
 ### Verification Procedure
 
 A complete verification involves four checks:
