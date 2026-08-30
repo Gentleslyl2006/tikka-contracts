@@ -198,6 +198,7 @@ pub enum Error {
     RandomnessTooEarly = 64,
     CancelTimelockActive = 65,
     CancelNotScheduled = 66,
+    CommitAlreadySubmitted = 67,
 }
 
 #[contractimpl]
