@@ -435,5 +435,69 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         &factory,
         &Symbol::new(env, "record_leaderboard_entry"),
         args,
+        use raffle_shared::BuyQuote;
+
+/// Shared by `buy_tickets` and `preview_buy` so charges never diverge.
+///
+/// Precedence:
+/// 1. Best bundle with `quantity <= purchase qty` (else list `ticket_price`)
+/// 2. Early-bird discount on that unit price (window from `tickets_sold`)
+/// 3. Protocol fee on post-discount total
+pub(crate) fn calculate_buy_quote(raffle: &Raffle, quantity: u32) -> Result<BuyQuote, Error> {
+    if quantity == 0 {
+        return Err(Error::InvalidQuantity);
+    }
+
+    let mut unit = raffle.ticket_price;
+    for i in 0..raffle.bundles.len() {
+        let b = raffle.bundles.get(i).unwrap();
+        if b.quantity <= quantity {
+            unit = b.price_per_ticket;
+        }
+    }
+
+    let gross = unit
+        .checked_mul(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    let mut discount: i128 = 0;
+    if raffle.early_bird_ticket_percentage > 0 && raffle.early_bird_discount_bp > 0 {
+        let eb_cap = (raffle.max_tickets as u64)
+            .saturating_mul(raffle.early_bird_ticket_percentage as u64)
+            / 100;
+        let sold = raffle.tickets_sold as u64;
+        if sold < eb_cap {
+            let remaining = (eb_cap - sold).min(quantity as u64) as i128;
+            let disc_per = unit
+                .checked_mul(raffle.early_bird_discount_bp as i128)
+                .ok_or(Error::ArithmeticOverflow)?
+                / 10_000;
+            discount = disc_per
+                .checked_mul(remaining)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
+    }
+
+    let after_discount = gross
+        .checked_sub(discount)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    // Floor fee — match current buy_tickets style (fee = total * bp / 10000)
+    let fee = after_discount
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10_000;
+
+    let effective_ticket_price = after_discount
+        .checked_div(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    Ok(BuyQuote {
+        gross,
+        discount,
+        fee,
+        net_to_pay: after_discount,
+        effective_ticket_price,
+
     );
 }
