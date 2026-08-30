@@ -2,7 +2,7 @@ use super::*;
 use soroban_sdk::testutils::Address as _;
 
 struct TicketSetup<'a> {
-    client: ContractClient<'a>,
+    client: RaffleInstanceClient<'a>,
     contract_id: Address,
     admin: Address,
     creator: Address,
@@ -12,8 +12,8 @@ struct TicketSetup<'a> {
 }
 
 fn setup(env: &Env, cap: u32, allow_multiple: bool, max_tickets: u32) -> TicketSetup<'_> {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -147,8 +147,8 @@ fn gifted_tickets_count_against_recipient_cap() {
 fn cap_cannot_exceed_max_tickets() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);

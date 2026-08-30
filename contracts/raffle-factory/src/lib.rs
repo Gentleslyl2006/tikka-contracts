@@ -421,7 +421,7 @@ fn create_raffle_internal(
         for _ in 0..count {
             id = Address::generate(env);
         }
-        env.register_at(&id, raffle_instance::Contract, ());
+        env.register_at(&id, raffle_instance::RaffleInstance, ());
         id
     };
 
@@ -2231,7 +2231,7 @@ mod tests {
         creator: &Address,
         count: u32,
     ) -> SdkVec<Address> {
-        use raffle_instance::ContractClient as RaffleInstanceClient;
+        use raffle_instance::RaffleInstanceClient;
 
         let factory_address = client.address.clone();
         let token_admin = Address::generate(env);
@@ -2251,7 +2251,7 @@ mod tests {
             config.protocol_fee_bp = protocol_fee_bp;
             config.treasury_address = Some(treasury.clone());
 
-            let raffle_address = env.register(raffle_instance::Contract, ());
+            let raffle_address = env.register(raffle_instance::RaffleInstance, ());
             RaffleInstanceClient::new(env, &raffle_address).init(
                 &factory_address,
                 admin,
@@ -2549,7 +2549,7 @@ mod tests {
 
         let pending = client.get_pending_op(&op_id);
         assert!(pending.is_none());
-        let raffle = raffle_instance::ContractClient::new(&env, &raffle_address);
+        let raffle = raffle_instance::RaffleInstanceClient::new(&env, &raffle_address);
         let raffle_state = raffle.get_raffle();
         assert_eq!(raffle_state.creator, creator);
         assert_eq!(raffle_state.treasury_address, Some(treasury.clone()));

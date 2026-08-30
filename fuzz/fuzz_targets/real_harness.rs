@@ -1,10 +1,10 @@
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, BytesN, Env, String, Vec};
-use tikka_raffle_instance::{Contract, ContractClient, RaffleStatus};
+use tikka_raffle_instance::{RaffleInstance, RaffleInstanceClient, RaffleStatus};
 use raffle_shared::{RaffleConfig, RandomnessSource};
 
-pub fn setup(env: &Env, max_tickets: u32) -> (ContractClient<'_>, Address, Address, StellarAssetClient<'_>) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+pub fn setup(env: &Env, max_tickets: u32) -> (RaffleInstanceClient<'_>, Address, Address, StellarAssetClient<'_>) {
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = Address::generate(env);
     let admin = Address::generate(env);
     let creator = Address::generate(env);

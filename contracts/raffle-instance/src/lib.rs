@@ -201,7 +201,7 @@ pub enum Error {
 }
 
 #[contractimpl]
-impl Contract {
+impl RaffleInstance {
     pub fn init(
         env: Env,
         factory: Address,

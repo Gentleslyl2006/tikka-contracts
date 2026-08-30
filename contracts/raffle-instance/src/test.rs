@@ -174,8 +174,8 @@ fn test_admin_updates_oracle_address() {
     let oracle = Address::generate(&env);
     let new_oracle = Address::generate(&env);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Oracle migration"),
@@ -229,8 +229,8 @@ fn test_admin_sets_protocol_fee_before_sales() {
     let creator = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Fee update"),
@@ -293,8 +293,8 @@ fn non_winner_cannot_claim() {
     token_mint.mint(&creator, &1_000_000);
     token_mint.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "test raffle"),
@@ -351,8 +351,8 @@ fn buy_tickets_rejects_quantity_above_per_tx_cap() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -408,8 +408,8 @@ fn buy_tickets_rejects_overflowing_total_price_without_wrapping() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -473,15 +473,15 @@ fn setup_scale_raffle(
     max_tickets_per_tx: u32,
     prize_amount: i128,
 ) -> (
-    ContractClient<'_>,
+    RaffleInstanceClient<'_>,
     Address,
     Address,
     Address,
     Address,
     token::StellarAssetClient<'_>,
 ) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -631,15 +631,15 @@ fn get_my_tickets_cost_stays_below_ceiling_for_10k_owned_tickets() {
 fn setup_active_raffle(
     env: &Env,
 ) -> (
-    ContractClient<'_>,
+    RaffleInstanceClient<'_>,
     Address,
     Address,
     Address,
     Address,
     token::StellarAssetClient<'_>,
 ) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
@@ -756,8 +756,8 @@ fn test_wipe_storage_removes_all_keys() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -907,8 +907,8 @@ fn emergency_withdraw_rejects_finalized_state_after_delay() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -982,8 +982,8 @@ fn emergency_withdraw_fails_for_no_deadline_raffle_before_timeout() {
     let token_client = StellarAssetClient::new(&env, &payment_token);
     token_client.mint(&creator, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Refund test"),
@@ -1038,8 +1038,8 @@ fn emergency_withdraw_succeeds_for_drawing_raffle_after_timeout() {
     let token_client = StellarAssetClient::new(&env, &payment_token);
     token_client.mint(&creator, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1099,8 +1099,8 @@ fn emergency_withdraw_fails_in_active_state() {
     let token_client = StellarAssetClient::new(&env, &payment_token);
     token_client.mint(&creator, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1183,9 +1183,9 @@ fn emergency_withdraw_fails_in_cancelled_state() {
 
 fn setup_external_drawing_raffle(
     env: &Env,
-) -> (Address, ContractClient<'_>, Address, Address, Address, u64) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+) -> (Address, RaffleInstanceClient<'_>, Address, Address, Address, u64) {
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
@@ -1247,8 +1247,8 @@ fn emergency_withdraw_fails_if_prize_not_deposited() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1312,8 +1312,8 @@ fn test_refund_guard_released_after_success() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1366,8 +1366,8 @@ fn emergency_withdraw_only_callable_by_creator_or_admin() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1430,8 +1430,8 @@ fn emergency_withdraw_sets_status_to_cancelled_and_clears_prize_deposited() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Guard release"),
@@ -1497,8 +1497,8 @@ fn test_claim_prize_deducts_protocol_fee() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Test"),
@@ -1609,8 +1609,8 @@ fn prize_distribution_invariant_holds_for_multiple_tiers() {
             token_client.mint(&buyer_b, &10_000_000);
             token_client.mint(&buyer_c, &10_000_000);
 
-            let contract_id = env.register(Contract, ());
-            let client = ContractClient::new(&env, &contract_id);
+            let contract_id = env.register(RaffleInstance, ());
+            let client = RaffleInstanceClient::new(&env, &contract_id);
 
             let prize_amount: i128 = 1_000_000;
             let ticket_price: i128 = MIN_TICKET_PRICE;
@@ -1718,8 +1718,8 @@ fn commit_reveal_entropy_is_mixed_from_all_tickets() {
         token_client.mint(&buyer_b, &1_000_000);
         token_client.mint(&buyer_c, &1_000_000);
 
-        let contract_id = env.register(Contract, ());
-        let client = ContractClient::new(&env, &contract_id);
+        let contract_id = env.register(RaffleInstance, ());
+        let client = RaffleInstanceClient::new(&env, &contract_id);
 
         let config = RaffleConfig {
             description: String::from_str(&env, "Commit reveal entropy"),
@@ -1800,8 +1800,8 @@ fn commit_reveal_preserves_entropy_after_ticket_transfer() {
     token_client.mint(&buyer_a, &1_000_000);
     token_client.mint(&buyer_b, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Commit survives transfer"),
@@ -1879,8 +1879,8 @@ fn commit_reveal_with_zero_commits_falls_back_to_prng() {
     token_client.mint(&buyer_a, &1_000_000);
     token_client.mint(&buyer_b, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Commit reveal no commits"),
@@ -1949,8 +1949,8 @@ fn drawing_lock_cleared_after_internal_finalize() {
     let token_client = StellarAssetClient::new(&env, &payment_token);
     token_client.mint(&creator, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Lock internal finalize"),
@@ -1991,8 +1991,8 @@ fn test_init_claim_lockup_seconds_at_bound_succeeds() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Lock oracle finalize"),
@@ -2097,8 +2097,8 @@ fn test_init_claim_lockup_seconds_above_bound_rejected() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Lock fallback finalize"),
@@ -2199,8 +2199,8 @@ fn test_bundle_pricing_applies() {
     token_client.mint(&creator, &100_000_000);
     token_client.mint(&buyer, &100_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Bundle test"),
@@ -2305,8 +2305,8 @@ fn test_init_claim_lockup_seconds_mid_range_succeeds() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
@@ -2430,8 +2430,8 @@ fn unique_winners_limits_one_tier_per_address() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(crate::Contract, ());
-    let client = crate::ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(crate::RaffleInstance, ());
+    let client = crate::RaffleInstanceClient::new(&env, &contract_id);
     let factory = Address::generate(&env);
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
@@ -2557,7 +2557,7 @@ fn init_bounds_config(
     }
 }
 
-fn assert_metadata_hash(client: &ContractClient<'_>, expected: &BytesN<32>) {
+fn assert_metadata_hash(client: &RaffleInstanceClient<'_>, expected: &BytesN<32>) {
     let raffle = client.get_raffle().unwrap();
     assert_eq!(raffle.metadata_hash, *expected);
 }
@@ -2567,7 +2567,7 @@ fn init_bounds_env() -> (Env, Address, Address, Address, Address, Address) {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
+    let contract_id = env.register(RaffleInstance, ());
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
     let factory = Address::generate(&env);
@@ -2582,7 +2582,7 @@ fn init_bounds_env() -> (Env, Address, Address, Address, Address, Address) {
 #[test]
 fn init_accepts_min_ticket_price_and_rejects_below_it() {
     let (env, contract_id, factory, admin, creator, payment_token) = init_bounds_env();
-    let client = ContractClient::new(&env, &contract_id);
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let prizes = soroban_sdk::vec![&env, 10000u32];
 
     let config = init_bounds_config(
@@ -2614,7 +2614,7 @@ fn init_accepts_min_ticket_price_and_rejects_below_it() {
 #[test]
 fn init_accepts_max_prize_amount_and_rejects_above_it() {
     let (env, contract_id, factory, admin, creator, payment_token) = init_bounds_env();
-    let client = ContractClient::new(&env, &contract_id);
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let prizes = soroban_sdk::vec![&env, 10000u32];
 
     let config = init_bounds_config(
@@ -2646,7 +2646,7 @@ fn init_accepts_max_prize_amount_and_rejects_above_it() {
 #[test]
 fn init_accepts_max_description_length_and_rejects_above_it() {
     let (env, contract_id, factory, admin, creator, payment_token) = init_bounds_env();
-    let client = ContractClient::new(&env, &contract_id);
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let prizes = soroban_sdk::vec![&env, 10000u32];
     let inside_description = String::from_str(&env, &"a".repeat(MAX_DESCRIPTION_LENGTH as usize));
     let outside_description =
@@ -2681,7 +2681,7 @@ fn init_accepts_max_description_length_and_rejects_above_it() {
 #[test]
 fn init_accepts_max_prizes_and_rejects_above_it() {
     let (env, contract_id, factory, admin, creator, payment_token) = init_bounds_env();
-    let client = ContractClient::new(&env, &contract_id);
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let mut inside_prizes = soroban_sdk::Vec::new(&env);
     for _ in 0..MAX_PRIZES {
         inside_prizes.push_back(10000u32);
@@ -2720,7 +2720,7 @@ fn init_accepts_max_prizes_and_rejects_above_it() {
 #[test]
 fn init_accepts_max_tickets_limit_and_rejects_above_it() {
     let (env, contract_id, factory, admin, creator, payment_token) = init_bounds_env();
-    let client = ContractClient::new(&env, &contract_id);
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let prizes = soroban_sdk::vec![&env, 10000u32];
 
     let config = init_bounds_config(
@@ -2771,8 +2771,8 @@ fn update_metadata_hash_before_deposit_only() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(crate::Contract, ());
-    let client = crate::ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(crate::RaffleInstance, ());
+    let client = crate::RaffleInstanceClient::new(&env, &contract_id);
     let factory = Address::generate(&env);
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
@@ -2843,8 +2843,8 @@ fn test_adversarial_ceiling_rounding() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Adversarial Rounding"),
@@ -2901,8 +2901,8 @@ fn test_explicit_zero_lockup_is_honored() {
     let creator = Address::generate(&env);
     let payment_token = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Zero Lockup"),
@@ -2947,8 +2947,8 @@ fn test_unset_lockup_gets_default() {
     let creator = Address::generate(&env);
     let payment_token = env.register_stellar_asset_contract_v2(Address::generate(&env)).address();
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Default Lockup"),
