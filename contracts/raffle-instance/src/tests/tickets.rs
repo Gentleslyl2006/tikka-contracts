@@ -56,7 +56,9 @@ fn setup(env: &Env, cap: u32, allow_multiple: bool, max_tickets: u32) -> TicketS
     };
 
     client.init(&factory, &admin, &creator, &config);
-    env.as_contract(&contract_id, || env.storage().instance().remove(&DataKey::Factory));
+    env.as_contract(&contract_id, || {
+        env.storage().instance().remove(&DataKey::Factory)
+    });
     client.deposit_prize();
 
     TicketSetup {
@@ -134,13 +136,56 @@ fn gifted_tickets_count_against_recipient_cap() {
     env.mock_all_auths();
     let setup = setup(&env, 2, true, 10);
 
-    setup.client.buy_tickets_for(&setup.buyer, &setup.recipient, &2);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.recipient), 0);
+    setup
+        .client
+        .buy_tickets_for(&setup.buyer, &setup.recipient, &2);
+    assert_eq!(
+        setup
+            .client
+            .get_remaining_ticket_allowance(&setup.recipient),
+        0
+    );
     assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
     assert_eq!(
-        setup.client.try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
+        setup
+            .client
+            .try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
+}
+
+#[test]
+fn gifted_tickets_charge_buyer_and_assign_owner_to_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup(&env, 10, true, 20);
+
+    let buyer_balance_before = setup.token.balance(&setup.buyer);
+    let recipient_balance_before = setup.token.balance(&setup.recipient);
+
+    let sold = setup
+        .client
+        .buy_tickets_for(&setup.buyer, &setup.recipient, &3);
+    assert_eq!(sold, 3);
+
+    let buyer_balance_after = setup.token.balance(&setup.buyer);
+    let recipient_balance_after = setup.token.balance(&setup.recipient);
+
+    assert_eq!(
+        buyer_balance_before - buyer_balance_after,
+        3 * MIN_TICKET_PRICE
+    );
+    assert_eq!(recipient_balance_after, recipient_balance_before);
+
+    for ticket_id in 1..=3 {
+        let ticket: Ticket = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Ticket(ticket_id))
+            .unwrap();
+        assert_eq!(ticket.owner, setup.recipient);
+        assert_eq!(ticket.payer, setup.buyer);
+    }
 }
 
 #[test]
