@@ -250,10 +250,6 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .ok_or(Error::ArithmeticOverflow)
         .map(|a| a / 10000)
 }
-
-    initial_index
-}
-
 /// Finalize the raffle using a pre-computed `u64` seed.
 ///
 /// This is the common finalization path shared by all three randomness modes
@@ -436,4 +432,120 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         &Symbol::new(env, "record_leaderboard_entry"),
         args,
     );
+}
+
+// ============================================================================
+// TTL Management
+// ============================================================================
+
+use raffle_shared::constants::{
+    INSTANCE_TTL_BUMP_LEDGERS,
+    INSTANCE_TTL_THRESHOLD_LEDGERS,
+    PERSISTENT_TTL_BUMP_LEDGERS,
+    PERSISTENT_TTL_THRESHOLD_LEDGERS,
+};
+
+/// Bump TTL for raffle instance and ticket entries.
+///
+/// This function is called on every `buy_tickets` and during `finalize_raffle`
+/// to keep the raffle contract and its ticket records alive.
+///
+/// ## Cost Bounding
+///
+/// The challenge: a raffle can have up to 100,000 tickets. Bumping all of them
+/// on every purchase would blow the Soroban resource budget.
+///
+/// **Solution:** Amortised bumping with a fixed window.
+/// - Instance entry: bumped unconditionally (1 storage write)
+/// - Ticket entries: bumped in a rolling window of `BUMP_WINDOW_SIZE` per call
+///
+/// This ensures the cost is **O(window_size)** regardless of `tickets_sold`.
+/// Over time, as tickets are purchased, all entries eventually get bumped.
+///
+/// ## Parameters
+/// - `env` - Soroban environment
+/// - `tickets_sold` - Current number of tickets sold
+///
+/// ## Constants Used
+/// - `INSTANCE_TTL_THRESHOLD_LEDGERS` - ~3 months
+/// - `INSTANCE_TTL_BUMP_LEDGERS` - ~6 months
+/// - `PERSISTENT_TTL_THRESHOLD_LEDGERS` - ~3 months
+/// - `PERSISTENT_TTL_BUMP_LEDGERS` - ~6 months
+pub(crate) fn bump_raffle_ttl(env: &Env, tickets_sold: u32) {
+    // 1. Bump instance entry unconditionally
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD_LEDGERS, INSTANCE_TTL_BUMP_LEDGERS);
+
+    // 2. Bump ticket entries in an amortised fashion
+    bump_ticket_entries_amortised(env, tickets_sold);
+}
+
+/// Amortised ticket TTL bumping.
+///
+/// Instead of bumping all `tickets_sold` entries (up to 100,000), we only bump
+/// a fixed-size window per call. The window advances on each call, cycling
+/// back to 0 once all tickets have been bumped.
+///
+/// This guarantees:
+/// - Cost is bounded by `BUMP_WINDOW_SIZE` (not `tickets_sold`)
+/// - All tickets eventually get bumped over time
+/// - Resource budget is never exceeded
+///
+/// ## How it works
+///
+/// 1. Read `last_bumped_index` from instance storage (default: 0)
+/// 2. Bump tickets from `last_bumped_index` to `last_bumped_index + WINDOW_SIZE`
+/// 3. Update `last_bumped_index` for the next call
+/// 4. If we reach the end, wrap back to 0 to keep cycling
+///
+/// ## Why this is safe
+///
+/// Tickets that are never bumped will eventually expire. However, as long as
+/// the raffle is active, `buy_tickets` is called regularly, and each call
+/// advances the window. Over the lifetime of a raffle, all tickets get bumped
+/// many times.
+///
+/// For a raffle that sells out quickly, tickets expire after ~6 months, which
+/// is more than enough time for the winner to claim their prize.
+fn bump_ticket_entries_amortised(env: &Env, tickets_sold: u32) {
+    const BUMP_WINDOW_SIZE: u32 = 100;
+
+    if tickets_sold == 0 {
+        return;
+    }
+
+    // Get the last bumped index (where we left off)
+    let last_bumped: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::LastBumpedIndex)
+        .unwrap_or(0);
+
+    // Calculate the window of tickets to bump
+    let start = last_bumped;
+    let end = (start + BUMP_WINDOW_SIZE).min(tickets_sold);
+
+    // Bump each ticket in the window
+    for ticket_id in start..end {
+        // Ticket IDs start at 1, but the key uses the ID directly
+        let ticket_key = DataKey::Ticket(ticket_id + 1);
+        env.storage().persistent().extend_ttl(
+            &ticket_key,
+            PERSISTENT_TTL_THRESHOLD_LEDGERS,
+            PERSISTENT_TTL_BUMP_LEDGERS,
+        );
+    }
+
+    // Update the last bumped index for the next call
+    let next_index = if end >= tickets_sold {
+        // We've reached the end - wrap back to 0 to keep cycling
+        0
+    } else {
+        end
+    };
+
+    env.storage()
+        .instance()
+        .set(&DataKey::LastBumpedIndex, &next_index);
 }

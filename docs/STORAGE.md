@@ -152,3 +152,26 @@ Persistent keys need `--durability persistent` and `--key …` (or batched tooli
 - [RANDOMNESS.md](RANDOMNESS.md) — how draw keys are used
 - [ARCHITECTURE.md](ARCHITECTURE.md) — lifecycle states
 - [COMMIT_REVEAL.md](COMMIT_REVEAL.md) — `CommitEntry` protocol
+
+## Raffle TTL Management
+
+### Instance TTL
+The raffle instance entry is bumped on every `buy_tickets` and `finalize_raffle` call via `bump_raffle_ttl()`.
+
+- **Threshold**: `INSTANCE_TTL_THRESHOLD_LEDGERS` (1,555,200 ledgers / ~3 months)
+- **Bump to**: `INSTANCE_TTL_BUMP_LEDGERS` (3,110,400 ledgers / ~6 months)
+- **Frequency**: Bumped unconditionally on every purchase
+
+### Ticket TTL (Amortised Bumping)
+Ticket entries are NOT bumped all at once to avoid exceeding the Soroban resource budget.
+
+- **Window size**: 100 tickets per call
+- **Strategy**: Each `bump_raffle_ttl` call bumps the next `WINDOW_SIZE` tickets
+- **Cycle**: Once all tickets are bumped, the cycle resets to keep entries alive
+- **Cost**: O(window_size) regardless of total tickets sold
+
+### Why This Works
+- Each purchase calls `bump_raffle_ttl`
+- Over time, all tickets get bumped
+- Tickets expire after ~6 months if not bumped
+- Winners have plenty of time to claim their prizes

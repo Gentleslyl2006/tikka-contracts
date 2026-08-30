@@ -134,6 +134,7 @@ pub enum DataKey {
     QuorumSeed(Address),
     /// Quorum randomness: ordered list of oracles that have submitted.
     QuorumSubmittedOracles,
+    LastBumpedIndex,
 }
 
 #[contracttype]
@@ -772,7 +773,7 @@ if config.randomness_source == RandomnessSource::External {
         // To complete the refactor, this logic should be moved to `helpers.rs`.
         Err(Error::InvalidParameters)
     }
-}
+
 #[cfg(test)]
 mod test;
 #[cfg(test)]
