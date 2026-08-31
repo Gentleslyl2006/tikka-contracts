@@ -9,10 +9,10 @@ use crate::events::{
     RandomnessRequested,
 };
 use crate::helpers::{
-    build_internal_seed_u64, do_finalize_with_seed, read_raffle, request_randomness,
+    do_finalize_with_seed, read_raffle, request_randomness,
     revert_status, transition_status, transition_to_drawing, write_raffle,
 };
-use crate::randomness::build_vrf_proof_message;
+use crate::randomness::{build_internal_seed_u64, build_vrf_proof_message};
 use crate::{CommitRevealEntry, DataKey, Error, RaffleStatus, ORACLE_TIMEOUT_LEDGERS};
 
 pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
