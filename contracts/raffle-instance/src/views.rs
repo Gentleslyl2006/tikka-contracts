@@ -162,8 +162,10 @@ pub(crate) fn is_ticket_sales_paused(env: Env) -> bool {
 
 /// Return the number of tickets `owner` may still receive.
 ///
-/// A zero per-address cap means unlimited, so the raffle-wide remaining
-/// capacity is returned in that case.
+/// If `max_tickets_per_address` is non-zero, it limits the result and supersedes
+/// `allow_multiple`. A zero per-address cap means unlimited, in which case
+/// `allow_multiple: false` still limits an address to one ticket. The result
+/// never exceeds the raffle-wide remaining capacity.
 pub(crate) fn get_remaining_ticket_allowance(
     env: Env,
     owner: Address,
@@ -174,12 +176,16 @@ pub(crate) fn get_remaining_ticket_allowance(
         .persistent()
         .get(&DataKey::TicketCount(owner))
         .unwrap_or(0);
-    let limit = if raffle.max_tickets_per_address == 0 {
-        raffle.max_tickets
-    } else {
+    let per_address_limit = if raffle.max_tickets_per_address > 0 {
         raffle.max_tickets_per_address
+    } else if !raffle.allow_multiple {
+        1
+    } else {
+        raffle.max_tickets
     };
-    Ok(limit.saturating_sub(current_count))
+    let global_remaining = raffle.max_tickets.saturating_sub(raffle.tickets_sold);
+    let address_remaining = per_address_limit.saturating_sub(current_count);
+    Ok(global_remaining.min(address_remaining))
 }
 
 /// Return the total protocol fees collected in this raffle instance that have
