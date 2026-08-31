@@ -208,21 +208,6 @@ pub(crate) fn validate_token_address(env: &Env, token_address: &Address) -> Resu
     Ok(())
 }
 
-pub(crate) fn build_internal_seed_u64(env: &Env) -> u64 {
-    use soroban_sdk::xdr::ToXdr;
-    let xdr = (
-        env.ledger().timestamp(),
-        env.ledger().sequence(),
-        env.current_contract_address(),
-    )
-        .to_xdr(env);
-    let hash: BytesN<32> = env.crypto().sha256(&xdr).into();
-    let arr = hash.to_array();
-    let mut bytes = [0u8; 8];
-    bytes.copy_from_slice(&arr[..8]);
-    u64::from_be_bytes(bytes)
-}
-
 pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i128, Error> {
     let last_tier_index = raffle.prizes.len() - 1;
     if tier_index == last_tier_index {
