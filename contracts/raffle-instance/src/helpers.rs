@@ -437,3 +437,43 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         args,
     );
 }
+
+pub(crate) fn calculate_buy_quote(
+    raffle: &Raffle,
+    quantity: u32,
+) -> Result<(i128, i128, i128), Error> {
+    let early_bird_cap = (raffle.ticket_supply as u64)
+        .checked_mul(raffle.early_bird_ticket_percentage as u64)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 100;
+    let early_bird_remaining = (early_bird_cap as u32).saturating_sub(raffle.tickets_sold);
+    let early_bird_quantity = u32::min(quantity, early_bird_remaining);
+    let regular_quantity = quantity - early_bird_quantity;
+
+    let discounted_price = raffle
+        .ticket_price
+        .checked_mul((10000 - raffle.early_bird_discount_bp) as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10000;
+
+    let early_bird_cost = (early_bird_quantity as i128)
+        .checked_mul(discounted_price)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let regular_cost = (regular_quantity as i128)
+        .checked_mul(raffle.ticket_price)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let total_price = early_bird_cost
+        .checked_add(regular_cost)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    let protocol_fee = total_price
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10000;
+
+    let effective_ticket_price = total_price
+        .checked_div(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    Ok((total_price, protocol_fee, effective_ticket_price))
+}
