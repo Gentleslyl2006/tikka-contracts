@@ -9,14 +9,16 @@
 //! |---|---|
 //! | [`get_raffle`] | Full [`Raffle`](crate::Raffle) struct |
 //! | [`get_fairness_data`] | Post-draw audit data ([`FairnessData`]) |
+//! | [`get_stats`] | Aggregate dashboard metrics ([`RaffleStats`]) |
 //! | [`is_paused`] | Whether the instance-level pause flag is set |
 //! | [`is_ticket_sales_paused`] | Whether ticket sales are paused within an active raffle |
 //! | [`get_accumulated_fees`] | Protocol fees collected but not yet withdrawn |
 
-use soroban_sdk::{Env, Vec};
+use soroban_sdk::{Address, Env, Vec};
 
-use raffle_shared::FairnessData;
+use raffle_shared::{BuyQuote, FairnessData};
 
+use crate::helpers::calculate_buy_quote;
 use crate::{read_raffle, DataKey, Error, FairnessMetadata};
 
 /// Return the full [`Raffle`](crate::Raffle) struct from instance storage.
@@ -69,6 +71,70 @@ pub(crate) fn get_fairness_data(env: Env) -> Result<FairnessData, Error> {
         winning_ticket_indices: meta.winning_ticket_indices,
         draw_timestamp: meta.draw_timestamp,
         draw_sequence: meta.draw_sequence,
+        unique_winners: meta.unique_winners,
+    })
+}
+
+/// Return a single-call dashboard view of the raffle's key metrics.
+///
+/// Aggregates data from multiple storage keys — [`Raffle`](crate::Raffle),
+/// [`TicketBuyers`](crate::DataKey::TicketBuyers), and
+/// [`AccumulatedFees`](crate::DataKey::AccumulatedFees) — into a single
+/// [`RaffleStats`] payload so frontends no longer need multiple RPC round-trips.
+///
+/// # Fields returned
+///
+/// | Field | Source |
+/// |---|---|
+/// | `tickets_sold` | [`Raffle::tickets_sold`](crate::Raffle) |
+/// | `unique_buyers` | `TicketBuyers` — deduplicated buyer address list |
+/// | `gross_revenue` | `tickets_sold * ticket_price` |
+/// | `fees_accrued` | `AccumulatedFees` instance storage |
+/// | `prize_funded` | [`Raffle::prize_deposited`](crate::Raffle) |
+/// | `status` | [`Raffle::status`](crate::Raffle) |
+/// | `time_remaining` | `end_time - ledger_timestamp` (0 if past deadline or `no_deadline`) |
+///
+/// # Errors
+///
+/// - [`Error::NotInitialized`] — the raffle has not been initialised.
+/// - [`Error::ArithmeticOverflow`] — the gross revenue calculation overflows.
+pub(crate) fn get_stats(env: Env) -> Result<RaffleStats, Error> {
+    let raffle = read_raffle(&env)?;
+
+    let buyers: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TicketBuyers)
+        .unwrap_or_else(|| Vec::new(&env));
+
+    let fees_accrued: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::AccumulatedFees)
+        .unwrap_or(0);
+
+    let now = env.ledger().timestamp();
+
+    let time_remaining = if raffle.no_deadline {
+        0
+    } else if raffle.end_time > now {
+        raffle.end_time - now
+    } else {
+        0
+    };
+
+    let gross_revenue = (raffle.tickets_sold as i128)
+        .checked_mul(raffle.ticket_price)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    Ok(RaffleStats {
+        tickets_sold: raffle.tickets_sold,
+        unique_buyers: buyers.len(),
+        gross_revenue,
+        fees_accrued,
+        prize_funded: raffle.prize_deposited,
+        status: raffle.status,
+        time_remaining,
     })
 }
 
@@ -94,6 +160,28 @@ pub(crate) fn is_ticket_sales_paused(env: Env) -> bool {
     read_raffle(&env).map(|r| r.ticket_sales_paused).unwrap_or(false)
 }
 
+/// Return the number of tickets `owner` may still receive.
+///
+/// A zero per-address cap means unlimited, so the raffle-wide remaining
+/// capacity is returned in that case.
+pub(crate) fn get_remaining_ticket_allowance(
+    env: Env,
+    owner: Address,
+) -> Result<u32, Error> {
+    let raffle = read_raffle(&env)?;
+    let current_count: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TicketCount(owner))
+        .unwrap_or(0);
+    let limit = if raffle.max_tickets_per_address == 0 {
+        raffle.max_tickets
+    } else {
+        raffle.max_tickets_per_address
+    };
+    Ok(limit.saturating_sub(current_count))
+}
+
 /// Return the total protocol fees collected in this raffle instance that have
 /// not yet been withdrawn.
 ///
@@ -106,4 +194,33 @@ pub(crate) fn is_ticket_sales_paused(env: Env) -> bool {
 /// fully withdrawn.
 pub(crate) fn get_accumulated_fees(env: Env) -> i128 {
     env.storage().instance().get(&DataKey::AccumulatedFees).unwrap_or(0)
+}
+
+/// Quote the exact cost of buying `quantity` tickets including early-bird
+/// discounts and protocol fees.
+///
+/// This is a **read-only** view — it does not mutate state, does not require
+/// authorisation, and does not check business-rule validations such as
+/// raffle status, pausing, or ticket availability.  It exists purely to let
+/// wallets and frontends compute the precise amount that
+/// [`buy_tickets`](crate::tickets::buy_tickets) would charge for a given
+/// `quantity` at the current `tickets_sold`.
+///
+/// The underlying helper [`calculate_buy_quote`](crate::helpers::calculate_buy_quote)
+/// is the **same function** called by `buy_tickets` at execution time, so
+/// the preview can never diverge from the on-chain charge.
+///
+/// # Returns
+///
+/// [`BuyQuote`] with `{ gross, discount, fee, net_to_pay, effective_ticket_price }`.
+///
+/// # Errors
+///
+/// - [`Error::NotInitialized`] — the contract has not been initialised.
+/// - [`Error::InvalidQuantity`] — `quantity == 0`.
+/// - [`Error::InvalidParameters`] — overflow computing the gross total.
+/// - [`Error::ArithmeticOverflow`] — overflow in discount or fee math.
+pub(crate) fn preview_buy(env: Env, quantity: u32) -> Result<BuyQuote, Error> {
+    let raffle = read_raffle(&env)?;
+    calculate_buy_quote(&raffle, quantity)
 }

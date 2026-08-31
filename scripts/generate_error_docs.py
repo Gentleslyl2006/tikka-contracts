@@ -214,6 +214,7 @@ def main():
     # Get the repository root
     repo_root = Path(__file__).parent.parent
     rust_file = repo_root / "contracts" / "raffle-instance" / "src" / "lib.rs"
+    errors_doc = repo_root / "docs" / "ERRORS.md"
     
     if not rust_file.exists():
         print(f"Error: Rust file not found at {rust_file}")
@@ -222,12 +223,39 @@ def main():
     # Parse the error enum
     errors = parse_error_enum(rust_file)
     
-    print(f"Found {len(errors)} error codes")
-    print("\nMarkdown Table:")
-    print(generate_markdown_table(errors))
-    print("\nTypeScript Mapping:")
-    print(generate_typescript_mapping(errors))
+    table_content = generate_markdown_table(errors)
+    
+    if errors_doc.exists():
+        with open(errors_doc, 'r') as f:
+            doc_text = f.read()
+        
+        # Replace content between Error Code Mapping header or update table section
+        # Ensure deterministic file writing
+        lines = doc_text.splitlines()
+        new_lines = []
+        in_table_section = False
+        
+        for line in lines:
+            if line.startswith("### General Errors") or line.startswith("| Code | Error"):
+                if not in_table_section:
+                    in_table_section = True
+                    new_lines.append(table_content)
+                continue
+            if in_table_section:
+                if line.startswith("## ") or line.startswith("---"):
+                    in_table_section = False
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+        
+        updated_doc = '\n'.join(new_lines) + '\n'
+        with open(errors_doc, 'w') as f:
+            f.write(updated_doc)
+    else:
+        with open(errors_doc, 'w') as f:
+            f.write(table_content + '\n')
 
 
 if __name__ == "__main__":
     main()
+

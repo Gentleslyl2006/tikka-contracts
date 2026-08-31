@@ -122,11 +122,11 @@ Emitted when a new admin operation is proposed through the timelock mechanism.
 | Field | Type | Description |
 |-------|------|-------------|
 | `op_id` | `u32` | Unique operation identifier (auto-incremented) |
-| `op` | `AdminOp` | The proposed admin operation: `SetConfig(u32, Address)` (fee_bp + treasury) or `UpdateWasmHash(BytesN<32>)` |
+| `op` | `AdminOp` | The proposed admin operation: `SetConfig(ConfigKey, Address)`, `SetProtocolFeeBP(u32)`, or `UpdateWasmHash(BytesN<32>)` |
 | `effective_timestamp` | `u64` | Timestamp when the operation becomes executable (after timelock delay) |
 | `proposed_by` | `Address` | Address that proposed the operation |
 
-**Emitted by:** `set_config`
+**Emitted by:** `propose_config_change`, `propose_fee_change`
 **When:** Admin proposes a config change. The operation is stored with a timelock before it can be executed.
 
 ---
@@ -173,7 +173,7 @@ Emitted when the factory-level treasury address is changed.
 | `changed_by` | `Address` | Address that authorized the change (indexed topic) |
 | `timestamp` | `u64` | Ledger timestamp of the change |
 
-**Emitted by:** (dead code — `TreasuryChanged` is defined but the treasury update path uses `AdminOpExecuted` + `SetConfig` instead)
+**Emitted by:** (dead code — `TreasuryChanged` is defined but the treasury update path uses `AdminOpExecuted` + `SetConfig(ConfigKey::Treasury, Address)` instead)
 **When:** Treasury address is changed via an executed admin operation. The factory's actual behavior emits `AdminOpProposed` → `AdminOpExecuted` with a `SetConfig` payload.
 
 ---
@@ -281,6 +281,37 @@ Emitted when the factory contract's WASM code is upgraded.
 
 **Emitted by:** `upgrade`
 **When:** Admin upgrades the factory contract to a new WASM implementation.
+
+---
+
+## ProfileNameSet
+
+Emitted when a creator sets or updates their profile display name.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `creator` | `Address` | Address of the profile owner |
+| `name` | `String` | Display name set by the creator (max 1000 bytes) |
+| `timestamp` | `u64` | Ledger timestamp of the update |
+
+**Emitted by:** `set_profile_name`
+**When:** A creator self-updates their on-chain profile name.
+
+---
+
+## VerifiedStatusSet
+
+Emitted when the admin grants or revokes a verified badge for a creator.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `creator` | `Address` | Address of the profile being updated |
+| `verified` | `bool` | Verified status (`true` = verified, `false` = unverified) |
+| `set_by` | `Address` | Admin address that made the change |
+| `timestamp` | `u64` | Ledger timestamp of the update |
+
+**Emitted by:** `set_verified`
+**When:** Admin grants or revokes verified status for a creator profile.
 
 ---
 
@@ -399,6 +430,26 @@ Emitted when a buyer successfully purchases one or more tickets.
 
 **Emitted by:** `buy_tickets`
 **When:** After successful token transfer from buyer to contract, ticket records written, and state committed. Raffle must be in `Active` status with ticket sales not paused.
+
+---
+
+## TicketGifted
+
+Emitted when a buyer successfully purchases one or more tickets for a recipient.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `buyer` | `Address` | Address that paid for the tickets |
+| `recipient` | `Address` | Address receiving the tickets |
+| `ticket_ids` | `Vec<u32>` | List of ticket IDs assigned (1-indexed, sequential within this purchase) |
+| `quantity` | `u32` | Number of tickets purchased in this transaction |
+| `ticket_price` | `i128` | Price per ticket in stroops of `payment_token` |
+| `total_paid` | `i128` | Total amount transferred from buyer |
+| `protocol_fee` | `i128` | Amount immediately sent to treasury as protocol fee |
+| `timestamp` | `u64` | Ledger timestamp of the purchase |
+
+**Emitted by:** `buy_tickets_for`
+**When:** After successful token transfer from buyer to contract, ticket records written, and state committed for the recipient.
 
 ---
 
@@ -560,7 +611,7 @@ Emitted when a verified winner claims their prize.
 | `payment_token` | `Address` | Token contract used for the payout |
 | `gross_amount` | `i128` | Total prize amount before any deductions |
 | `net_amount` | `i128` | Amount transferred to the winner (equals gross; fees are charged at ticket purchase) |
-| `platform_fee` | `i128` | Always 0 — protocol fees are collected on ticket sales, not prize claims |
+| `platform_fee` | `i128` | Always 0 — prize-claim protocol fees are not implemented |
 | `claimed_at` | `u64` | Ledger timestamp of the claim |
 
 **Emitted by:** `claim_prize`
@@ -613,7 +664,7 @@ Emitted when an emergency withdrawal of the prize is performed for a stuck raffl
 | `timestamp` | `u64` | Ledger timestamp of the withdrawal |
 
 **Emitted by:** `emergency_withdraw`
-**When:** After the `EMERGENCY_WITHDRAW_DELAY_SECONDS` (90-day) timeout has elapsed for a raffle stuck in `Finalized` or `Drawing` status. Creator or admin forcibly withdraws the prize pool.
+**When:** After the `EMERGENCY_WITHDRAW_DELAY_SECONDS` (90-day) timeout has elapsed for a raffle stuck in `Drawing` status. The delay starts at `end_time`, or at the randomness request ledger for a no-deadline raffle. Finalized raffles are not eligible because winners may still claim.
 
 ---
 

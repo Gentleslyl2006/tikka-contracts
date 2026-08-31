@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
-rust-version = "1.70"
 members = [
   "contracts/*",
-  "fuzz",
 ]
 default-members = ["contracts/*"]
+
+[workspace.package]
+rust-version = "1.70"
 
 
 [workspace.dependencies]

@@ -2,7 +2,7 @@
 
 Canonical map of Soroban storage keys for **raffle-factory** and **raffle-instance**: tier (instance vs persistent), write pattern, archival risk, and operator TTL guidance.
 
-> Soroban deletes expired entries permanently. These contracts do **not** call `extend_ttl` on-chain; operators must bump TTLs externally (Stellar CLI / cron). See also the TTL section in [DEVELOPMENT.md](../DEVELOPMENT.md).
+> Soroban deletes expired entries permanently. These contracts **do** call `extend_ttl` on-chain in hot paths (`buy_tickets`, `finalize_raffle`) and expose a permissionless `extend_ttl()` entrypoint on every raffle instance so anyone can keep a raffle alive. Operators may still bump TTLs externally (Stellar CLI / cron) for added resilience. See also the TTL section in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Storage tiers (quick reference)
 
@@ -81,7 +81,7 @@ Source of truth: `DataKey` enum (and admin-cancel flow keys noted below).
 | `RandomnessSeed` | **Persistent** (fairness metadata); readers may also check instance in older paths | On successful finalize | Audit / dispute | Prefer keep after finalize | `FairnessMetadata` / seed fingerprint for `get_fairness_data` |
 | `Ticket(u32)` | **Persistent** | Per purchased ticket | Yes | No until refunds/claims done | Owner + purchase metadata |
 | `TicketCount(Address)` | **Persistent** | Updated per buy | Yes | No until cleanup | Per-buyer counts |
-| `OwnerTickets(Address)` | **Persistent** | Appended per buy | Yes | No until cleanup | O(1) owner → ticket IDs index |
+| `OwnerTickets(Address)` | **Persistent** | Reserved; not currently written | No | N/A | Intended owner → ticket IDs index |
 | `TicketBuyers` | **Persistent** | Appended when buyer first appears | Yes | No until cleanup | Buyer enumeration for cleanup/refunds |
 | `TicketRefunded(u32)` | **Persistent** | Once per refunded/claimed ticket | Yes | After full settlement | Idempotency marker |
 | `CommitEntry(u32)` | **Persistent** | `submit_commit` (CommitReveal mode) | Yes until draw | After finalize OK | Hash keyed by **ticket ID** (survives transfer) |
@@ -110,6 +110,20 @@ Admin cancellation scheduling (`execute_admin_cancel` / related flows) stores a 
 | Any `Ticket(*)` / `OwnerTickets` / `TicketCount` — sales or refunds open | Explicit cleanup / all refunds processed |
 | `RandomnessSeed` — disputes possible | Policy retention window post-finalize |
 | Oracle pending keys | `provide_randomness` or fallback completes |
+
+### `wipe_storage`
+
+The `wipe_storage` entrypoint is an authenticated factory operation for
+reclaiming settlement-era storage. It is allowed only when the raffle status
+is `Claimed`, `Cancelled`, or `Failed`, and the instance balance is zero for
+both `payment_token` and `prize_token`. A non-zero balance rejects the call so
+that escrowed funds cannot become unreachable.
+
+On success it removes ticket records, refund markers, commit-reveal entries,
+buyer and owner-ticket indexes, quorum randomness entries, and transient
+lifecycle keys. It retains `Raffle`, `Factory`, `Admin`, `MetadataHash`, and
+`RandomnessSeed`; these remain required by read, attestation, fairness, and
+privileged paths. The operation emits `StorageWiped` for indexers.
 
 ---
 

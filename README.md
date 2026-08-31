@@ -1,6 +1,12 @@
 # Tikka - Decentralized Raffle Platform
 
-![Tikka Logo](https://via.placeholder.com/200x100/4F46E5/FFFFFF?text=TIKKA)
+![Tikka Logo](docs/assets/tikka-logo.svg)
+
+> Documentation is indexed in [docs/README.md](docs/README.md). The repository
+> is currently undergoing a hardening and build-repair pass; feature claims
+> should be treated as unverified until the relevant contract compiles.
+
+[![codecov](https://codecov.io/gh/OWNER/tikka-contracts/branch/master/graph/badge.svg)](https://codecov.io/gh/OWNER/tikka-contracts)
 
 ## 🎯 What is Tikka?
 
@@ -14,6 +20,13 @@ Tikka is a decentralized raffle platform built on Stellar using Soroban smart co
     `timestamp + sequence + raffle_id + tickets_sold`
 - Deterministic replay for identical raffle and ledger inputs
 - Intended for low-stakes raffles; high-stakes draws should use oracle randomness
+
+### **👤 Creator Profiles**
+
+- **Display Names**: Creators can set on-chain display names for brand identity
+- **Verified Badges**: Admin-granted verified status for trusted organizers
+- **Track Record**: Automatic counting of raffles created per organizer
+- **Trust Signals**: Frontends can display creator reputation without off-chain databases
 
 ### **💰 Token-Based Tickets and Prizes**
 
@@ -109,6 +122,9 @@ flowchart TD
 
 ## 🔧 Technical Architecture
 
+For authoritative architecture, storage, randomness, event, error, testing,
+and deployment documentation, see the [documentation index](docs/README.md).
+
 ### **Smart Contract Stack**
 
 - **Soroban (Rust)**: Smart contract implementation
@@ -140,6 +156,48 @@ pub fn get_raffle(... ) -> Result<Raffle, Error>;
 
 ### **Data Structures**
 
+`RaffleConfig` (`contracts/raffle-shared/src/lib.rs`) is the configuration payload supplied when creating a raffle. Values are validated by contract initialization before the raffle becomes active and represent the complete raffle policy surface:
+
+```rust
+pub struct RaffleConfig {
+    pub description: String,                  // Human-readable raffle description.
+    pub end_time: u64,                        // Unix timestamp when ticket sales close (ignored when `no_deadline` is true).
+    pub no_deadline: bool,                    // If true, raffle can remain open without a hard end timestamp.
+    pub max_tickets: u32,                     // Maximum number of tickets that can ever be sold.
+    pub max_tickets_per_tx: u32,              // Maximum tickets a single address may purchase per transaction.
+    pub min_tickets: u32,                     // Minimum number of tickets required for a successful draw.
+    pub allow_multiple: bool,                 // Whether one address may own multiple tickets.
+    pub ticket_price: i128,                   // Price per ticket denominated in the payment token's base units.
+    pub payment_token: Address,               // Soroban address for the token used to buy tickets.
+    pub prize_amount: i128,                   // Total prize amount denominated in the same payment token.
+    pub prizes: Vec<u32>,                     // Prize distribution vector; each value maps to winner allocation units.
+    pub randomness_source: RandomnessSource,  // Randomness source strategy selected for the raffle.
+    pub oracle_address: Option<Address>,      // Optional oracle contract address for external randomness flows.
+    pub protocol_fee_bp: u32,                 // Protocol fee in basis points (100 = 1%), charged at ticket purchase only.
+    pub treasury_address: Option<Address>,    // Optional treasury recipient address for protocol fees.
+    pub swap_router: Option<Address>,         // Optional router contract used when swap-based flows are enabled.
+    pub tikka_token: Option<Address>,         // Optional protocol token used in incentive/swap features.
+    pub metadata_hash: BytesN<32>,            // SHA-256 hash of immutable off-chain metadata content.
+    pub claim_lockup_seconds: u64,            // Seconds after finalization before winners may claim (0-604800, defaults to 3600).
+    pub swap_deadline_seconds: u64,           // Swap deadline window in seconds, added to current timestamp (defaults to 300).
+    pub early_bird_ticket_percentage: u32,    // Percentage of max_tickets covered by the early bird discount (0 to disable).
+    pub early_bird_discount_bp: u32,          // Early bird discount amount in basis points.
+    pub category: Option<String>,             // Optional on-chain category/tag used for frontend filtering.
+}
+```
+
+**Related types (`contracts/raffle-shared/src/lib.rs`)**
+
+-   `RaffleStatus` — lifecycle state of a raffle instance: `PendingPrize`, `Active`, `Drawing`, `Finalized`, `Cancelled`, `Failed`, `Claimed`.
+-   `RandomnessSource` — randomness strategy used for a raffle: `Internal`, `External`, `CommitReveal`.
+-   `RandomnessType` — classification of the randomness mechanism requested or received: `Prng`, `Vrf`, `Fallback`.
+-   `CancelReason` — canonical reason a raffle entered `Cancelled`: `CreatorCancelled`, `AdminCancelled`, `OracleTimeout`, `MinTicketsNotMet`.
+-   `FailureReason` — canonical reason a raffle entered `Failed`: `ZeroTicketsSold`, `MinTicketsNotMet`.
+-   `Ticket` — `id`, `owner`, `purchase_time`, `ticket_number`.
+-   `FairnessData` — audit data proving how a draw outcome was derived: `seed`, `randomness_source`, `ticket_ids`, `winning_ticket_indices`, `draw_timestamp`, `draw_sequence`.
+
+`Raffle` (`contracts/raffle-instance/src/lib.rs`) is the on-chain record stored for each raffle instance. It mirrors the resolved `RaffleConfig` fields and adds live raffle state:
+
 ```rust
 pub struct Raffle {
     pub creator: Address,
@@ -160,13 +218,24 @@ pub struct Raffle {
     pub claimed_winners: Vec<bool>,
     pub randomness_source: RandomnessSource,
     pub oracle_address: Option<Address>,
-    pub protocol_fee_bp: u32,
+    pub protocol_fee_bp: u32,                 // Charged at ticket purchase only; prize-claim fees are not implemented.
     pub treasury_address: Option<Address>,
     pub swap_router: Option<Address>,
     pub tikka_token: Option<Address>,
     pub finalized_at: Option<u64>,
     pub winner_ticket_id: Option<u32>,
-    pub claim_lockup_seconds: u64,
+    pub claim_lockup_seconds: Option<u64>,
+    pub swap_deadline_seconds: Option<u64>,
+    // ...all RaffleConfig fields (resolved via `resolve_defaults`), plus:
+    pub creator: Address,               // Address that created and configured the raffle.
+    pub prize_token: Address,           // Token used for prize deposit and claims; defaults to `payment_token`.
+    pub tickets_sold: u32,              // Running count of tickets sold so far.
+    pub status: RaffleStatus,           // Current lifecycle state of the raffle.
+    pub prize_deposited: bool,          // Whether the creator has deposited the prize into escrow.
+    pub winners: Vec<Address>,          // Addresses selected as winners after the draw.
+    pub claimed_winners: Vec<bool>,     // Per-winner claim status, indexed alongside `winners`.
+    pub finalized_at: Option<u64>,      // Unix timestamp when the raffle was finalized.
+    pub ticket_sales_paused: bool,      // Whether ticket sales are currently paused by an admin.
 }
 ```
 
@@ -250,6 +319,39 @@ stellar contract invoke ... -- \
 
 - **Contract Address**: `CCTCPMI66REXIJQPVOPNTNUZBCMSRM7TZLMIPQROZIID44XNP2P2MKFZ`
 
+## 🔄 CI/CD Testnet Smoke Test
+
+A weekly GitHub Actions workflow (`.github/workflows/testnet-smoke.yml`) runs every Monday at 6 AM UTC to deploy and exercise a full raffle lifecycle on Stellar Testnet. It can also be triggered manually via `workflow_dispatch`.
+
+The smoke test:
+1.  Deploys the factory contract
+2.  Creates a raffle instance
+3.  Buys 1 ticket
+4.  Finalizes the raffle
+5.  Claims the prize
+6.  Asserts all steps succeed
+
+### Required Secret
+
+The workflow requires a `TESTNET_SECRET_KEY` repository secret — the Stellar secret key (`S...`) of a funded testnet account used for all on-chain operations.
+
+To set it up:
+
+```bash
+# Generate a new keypair
+stellar keys generate smoke-test-account
+
+# Fund it via Friendbot
+curl "https://friendbot.stellar.org?addr=$(stellar keys address smoke-test-account)"
+
+# Export the secret key
+stellar keys show smoke-test-account
+```
+
+Then add the `S...` secret as a repository secret named `TESTNET_SECRET_KEY` in the GitHub repo settings under **Settings → Secrets and variables → Actions**.
+
+> **Security:** The `TESTNET_SECRET_KEY` secret should only have testnet funds. Never use a mainnet key for CI/CD.
+
 ## 🚀 Getting Started
 
 ### **Prerequisites**
@@ -261,22 +363,28 @@ stellar contract invoke ... -- \
 ### **Run Tests**
 
 ```bash
-cargo test -p raffle-factory
-cargo test -p raffle-instance
-cargo test -p raffle-shared
+make test
 ```
 
 ### **Build the Contract**
 
 ```bash
-cargo build -p raffle-factory
-cargo build -p raffle-instance
-cargo build -p raffle-shared
+make build
 ```
 
 ## 🛠️ Development
 
-For local setup, build, and test workflows, see `DEVELOPMENT.md`.
+The repo provides a top-level `Makefile` for local development. Common targets:
+
+```bash
+make build       # Build all contracts
+make test        # Run all tests
+make lint        # Format + clippy
+make fuzz        # Run fuzz targets
+make all         # lint + test + build (CI-like)
+```
+
+For additional setup details and build prerequisites, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## 🤝 Contributing
 
@@ -305,9 +413,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- **Documentation**: Check our guides
-- **Issues**: Report bugs and feature requests
-- **Community**: Join our Discord for discussions
+For questions, bug reports, and feature requests, see [`SUPPORT.md`](SUPPORT.md).
+
+- **Questions & How-Tos**: [GitHub Discussions](https://github.com/stellar/tikka-contracts/discussions)
+- **Report Bugs**: [GitHub Issues](https://github.com/stellar/tikka-contracts/issues)
+- **Request Features**: [GitHub Issues](https://github.com/stellar/tikka-contracts/issues)
+- **Documentation**: Check [`docs/README.md`](docs/README.md) and [`docs/FAQ.md`](docs/FAQ.md)
 
 ---
 

@@ -11,12 +11,12 @@ describe('buildVrfProofMessage', () => {
     const messageA = buildVrfProofMessage(
       'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
       requestId,
-      seed,
+      seed
     );
     const messageB = buildVrfProofMessage(
       'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM',
       requestId,
-      seed,
+      seed
     );
 
     expect(messageA.equals(messageB)).toBe(false);

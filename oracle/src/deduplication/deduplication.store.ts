@@ -4,10 +4,15 @@ import * as path from 'path';
 export class DeduplicationStore {
   private seen: Set<string> = new Set();
   private filePath: string;
+  private inMemoryMode: boolean;
 
   constructor(storePath: string = path.join(__dirname, '../../data/seen-requests.json')) {
     this.filePath = storePath;
-    this.loadFromDisk();
+    this.inMemoryMode = storePath === ':memory:';
+
+    if (!this.inMemoryMode) {
+      this.loadFromDisk();
+    }
   }
 
   private loadFromDisk() {
@@ -27,6 +32,10 @@ export class DeduplicationStore {
   }
 
   private saveToDisk() {
+    if (this.inMemoryMode) {
+      return; // Skip disk I/O in memory mode
+    }
+
     try {
       const dir = path.dirname(this.filePath);
       if (!fs.existsSync(dir)) {
@@ -46,5 +55,20 @@ export class DeduplicationStore {
     this.seen.add(key);
     this.saveToDisk();
     return false;
+  }
+
+  // Check if we've already seen this request (does not mutate state)
+  hasSeen(requestId: bigint, raffleAddress: string): boolean {
+    const key = `${raffleAddress}:${requestId.toString()}`;
+    return this.seen.has(key);
+  }
+
+  // Mark a request as seen and persist immediately
+  markSeen(requestId: bigint, raffleAddress: string): void {
+    const key = `${raffleAddress}:${requestId.toString()}`;
+    if (!this.seen.has(key)) {
+      this.seen.add(key);
+      this.saveToDisk();
+    }
   }
 }

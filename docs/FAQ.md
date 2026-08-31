@@ -217,6 +217,6 @@ Re-commit before pushing.
 
 ## Still stuck?
 
-1. Read [DEVELOPMENT.md](../DEVELOPMENT.md) and [DEPLOYMENT.md](DEPLOYMENT.md).  
+1. Read [DEVELOPMENT.md](DEVELOPMENT.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
 1. Search existing issues/PRs for the error string.  
 1. Open a new issue with: OS, `rustc -V`, `stellar --version`, `node -V`, and the full command + log.

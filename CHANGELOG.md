@@ -128,7 +128,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - `DrawingLock` reentrancy guard is now a separate `DataKey::DrawingLock` instance-storage flag rather than inline logic.
 - Commit-reveal entries keyed by ticket ID (`DataKey::CommitEntry(u32)`) instead of owner address so commits survive ticket transfers (#311).
 - `PrngWinnerSelection` and `OracleSeedWinnerSelection` extracted as implementations of the `WinnerSelectionStrategy` trait (#537).
-- `build_internal_seed` mixes five entropy sources: ledger timestamp, ledger sequence, network ID, raffle contract address (XDR), and tickets sold.
+- Internal PRNG seed construction uses four base inputs in `build_internal_seed`; `PrngWinnerSelection` adds tickets sold in a second hash.
 - `require_valid_role_address` uses an XDR-based zero-contract check (WASM-compatible) instead of `address.exists()` (#520).
 - `.gitignore` updated to exclude `target/`, `*.wasm`, `Cargo.lock`, `oracle/node_modules/`, `oracle/dist/`, `.stellar/`, `.soroban/`, `deployments/mainnet.json`, `.env`, `.DS_Store` (#499, #544).
 - `Cargo.toml` files for all crates now include `license`, `description`, `repository`, `authors`, `keywords`, and `categories` metadata (#493, #525).
