@@ -1,5 +1,6 @@
 #![no_std]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![warn(clippy::arithmetic_side_effects)]
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},

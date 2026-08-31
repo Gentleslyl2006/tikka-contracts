@@ -368,7 +368,11 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     let snapshot_sold = raffle.tickets_sold;
     let current_count: u32 = env.storage().persistent().get(&DataKey::TicketCount(recipient.clone())).unwrap_or(0);
 
-    if snapshot_sold + quantity > raffle.max_tickets {
+    if snapshot_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?
+        > raffle.max_tickets
+    {
         return Err(Error::TicketsSoldOut);
     }
     if raffle.max_tickets_per_address == 0
@@ -387,7 +391,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
-    let total_price = raffle.ticket_price.checked_mul(quantity as i128).ok_or(Error::InvalidParameters)?;
+    let total_price = raffle.ticket_price.checked_mul(quantity as i128).ok_or(Error::ArithmeticOverflow)?;
     let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
 
     let persisted = crate::read_raffle(&env)?;
@@ -396,7 +400,11 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     if persisted_sold != snapshot_sold || persisted_count != current_count {
         return Err(Error::InvalidStateTransition);
     }
-    if persisted_sold + quantity > persisted.max_tickets {
+    if persisted_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?
+        > persisted.max_tickets
+    {
         return Err(Error::TicketsSoldOut);
     }
 
@@ -409,14 +417,24 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
 
     let mut ticket_ids = Vec::new(&env);
     for i in 0..quantity {
-        let ticket_id = snapshot_sold + i + 1;
+        let ticket_id = snapshot_sold
+            .checked_add(i)
+            .and_then(|v| v.checked_add(1))
+            .ok_or(Error::ArithmeticOverflow)?;
         let ticket = Ticket { id: ticket_id, owner: recipient.clone(), purchase_time: timestamp, ticket_number: ticket_id, payer: buyer.clone() };
         env.storage().persistent().set(&DataKey::Ticket(ticket_id), &ticket);
         ticket_ids.push_back(ticket_id);
     }
 
-    env.storage().persistent().set(&DataKey::TicketCount(recipient.clone()), &(current_count + quantity));
-    raffle.tickets_sold = snapshot_sold + quantity;
+    env.storage().persistent().set(
+        &DataKey::TicketCount(recipient.clone()),
+        &current_count
+            .checked_add(quantity)
+            .ok_or(Error::ArithmeticOverflow)?,
+    );
+    raffle.tickets_sold = snapshot_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?;
 
     if raffle.tickets_sold >= raffle.max_tickets {
         transition_to_drawing(&env, &mut raffle, timestamp)?;
