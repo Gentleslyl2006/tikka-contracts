@@ -61,8 +61,9 @@ use crate::helpers::bump_raffle_ttl;
 /// 5. Verifies the raffle is `Active`, prize has been deposited, and the
 ///    deadline has not passed (unless `no_deadline` is set).
 /// 6. Checks `allow_multiple` — when `false`, each address may only hold one
-///    ticket across all transactions. The reserved
-///    `max_tickets_per_address` field is not enforced yet.
+///    ticket across all transactions. A non-zero `max_tickets_per_address`
+///    supersedes `allow_multiple`; when it is zero, `allow_multiple = false`
+///    keeps the one-ticket-per-address restriction.
 /// 7. Performs a double-read concurrency guard (snapshot vs. persisted state).
 /// 8. Writes each [`Ticket`] to persistent storage under
 ///    [`DataKey::Ticket(id)`](crate::DataKey::Ticket).
@@ -104,6 +105,8 @@ use crate::helpers::bump_raffle_ttl;
 ///   concurrent modification detected.
 /// - [`Error::RaffleExpired`] — deadline passed and `no_deadline` is false.
 /// - [`Error::TicketsSoldOut`] — purchase would exceed `max_tickets`.
+/// - [`Error::ExceedsMaxTicketsPerAddress`] — purchase would exceed
+///   `max_tickets_per_address`.
 /// - [`Error::MultipleTicketsNotAllowed`] — `allow_multiple` is false and
 ///   buyer already holds a ticket or `quantity > 1`.
 /// - [`Error::InvalidParameters`] — arithmetic overflow computing
@@ -337,6 +340,10 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     Ok(raffle.tickets_sold)
 }
 
+/// Purchase tickets for `recipient` as a gift.
+///
+/// The per-address limit and `allow_multiple` are enforced against
+/// `recipient`; `buyer` only authorizes the payment.
 pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quantity: u32) -> Result<u32, Error> {
     let drawing_lock: bool = env.storage().instance().get(&crate::DataKey::DrawingLock).unwrap_or(false);
     if drawing_lock {
