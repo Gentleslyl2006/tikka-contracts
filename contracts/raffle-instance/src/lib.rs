@@ -757,8 +757,6 @@ if config.randomness_source == RandomnessSource::External {
         Err(Error::InvalidParameters)
     }
 
-}
-
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
     /// from being archived by Soroban's TTL expiry.
     ///
