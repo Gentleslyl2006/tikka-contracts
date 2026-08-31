@@ -184,14 +184,10 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     }
 
     let timestamp = env.ledger().timestamp();
-    let total_price = raffle
-        .ticket_price
-        .checked_mul(quantity as i128)
-        .ok_or(Error::ArithmeticOverflow)?;
-    let protocol_fee = total_price
-        .checked_mul(raffle.protocol_fee_bp as i128)
-        .ok_or(Error::ArithmeticOverflow)?
-        / 10000;
+    let quote = calculate_buy_quote(&raffle, quantity)?;
+    let total_price = quote.net_to_pay;
+    let protocol_fee = quote.fee;
+    let effective_price = quote.effective_ticket_price;
 
     let persisted = crate::read_raffle(&env)?;
     let persisted_sold = persisted.tickets_sold;
@@ -387,8 +383,10 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
-    let total_price = raffle.ticket_price.checked_mul(quantity as i128).ok_or(Error::InvalidParameters)?;
-    let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
+    let quote = calculate_buy_quote(&raffle, quantity)?;
+    let total_price = quote.net_to_pay;
+    let protocol_fee = quote.fee;
+    let effective_price = quote.effective_ticket_price;
 
     let persisted = crate::read_raffle(&env)?;
     let persisted_sold = persisted.tickets_sold;
@@ -466,7 +464,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
         ticket_ids,
         quantity,
         ticket_price: raffle.ticket_price,
-        effective_ticket_price: raffle.ticket_price,
+        effective_ticket_price: effective_price,
         total_paid: total_price,
         protocol_fee,
         timestamp,

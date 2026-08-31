@@ -375,6 +375,24 @@ pub enum AdminOp {
     RemoveOracle(Address),
 }
 
+/// Pricing breakdown for a prospective ticket purchase.
+///
+/// Returned by `calculate_buy_quote` and surfaced via `preview_buy`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct BuyQuote {
+    /// Gross total before discount: `ticket_price × quantity`.
+    pub gross: i128,
+    /// Total early-bird discount applied.
+    pub discount: i128,
+    /// Protocol fee computed on the discounted total.
+    pub fee: i128,
+    /// Amount the buyer actually pays: `gross - discount`.
+    pub net_to_pay: i128,
+    /// Per-ticket price after discount: `net_to_pay / quantity`.
+    pub effective_ticket_price: i128,
+}
+
 // Re-export constants from the single source of truth
 pub use constants::{
     DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_PAGE_LIMIT, DEFAULT_SWAP_DEADLINE_SECONDS,
