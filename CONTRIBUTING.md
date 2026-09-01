@@ -64,13 +64,69 @@ cargo test -p raffle-instance
 
 ## Error Documentation Sync
 
-If you modify or add any variants to the `Error` enum in `contracts/raffle-instance/src/lib.rs`, regenerate `docs/ERRORS.md` before committing:
+If you modify or add any variants to the `Error` enum in `contracts/raffle-instance/src/lib.rs`
+or the `ContractError` enum in `contracts/raffle-factory/src/lib.rs`, regenerate
+`docs/ERRORS.md` before committing:
 
 ```bash
-python scripts/generate_error_docs.py
+python3 scripts/generate_error_docs.py
 ```
 
-CI will fail if `docs/ERRORS.md` is out of sync with the Rust `Error` enum.
+CI will fail if `docs/ERRORS.md` is out of sync with either enum. Every variant must
+have a `///` doc comment; duplicate discriminants and undeclared-but-used variants
+also fail the generator.
+
+## Continuous Integration
+
+All CI jobs must pass before a pull request can merge. A red build blocks merge —
+there are no exceptions for individual jobs. Required checks on `master` are:
+
+- `Build, Test, and Lint` (includes `cargo check`, formatting, clippy, and tests)
+- `Oracle Service CI`
+- `Shell Script Checks`
+
+Repository admins must enable branch protection on `master` so these checks are
+required and branches must be up to date before merging. Workflow changes land in
+PRs first; enforcement is enabled once the pipeline is green.
+
+## Events Documentation Sync
+
+If you modify or add any `#[contractevent]` struct in
+`contracts/raffle-shared/src/events.rs`, `contracts/raffle-factory/src/events.rs`,
+or `contracts/raffle-instance/src/events.rs`, regenerate `docs/EVENTS.md` before
+committing:
+
+```bash
+python scripts/generate_event_docs.py
+```
+
+Every event struct **and** every field must carry a `///` doc comment, and
+numeric fields must state whether they are 0-based **indices** or 1-based
+**IDs** (see the "Index-vs-ID convention" section of `docs/EVENTS.md`).
+
+CI will fail if `docs/EVENTS.md` is out of sync with the event structs.
+
+## Code Coverage
+
+Coverage is collected in CI for both the Rust workspace (`cargo llvm-cov`) and
+the oracle service (Jest with `--coverage`):
+
+- Rust and oracle `lcov` artifacts are uploaded as build artifacts.
+- Rust line coverage is enforced via a **ratchet**:
+  `scripts/check_coverage_ratchet.py` compares the current `lcov` output with
+  the committed baseline in `coverage/coverage-ratchet.json`. Coverage must
+  never **decrease** relative to that baseline; increases are automatically
+  adopted.
+
+To arm an updated ratchet after a big behavior change, regenerate the baseline
+and commit it in the same PR:
+
+```bash
+python scripts/check_coverage_ratchet.py \
+  --lcov coverage/lcov.info \
+  --baseline coverage/coverage-ratchet.json \
+  --update
+```
 
 ## Markdown
 

@@ -61,8 +61,9 @@ use crate::helpers::bump_raffle_ttl;
 /// 5. Verifies the raffle is `Active`, prize has been deposited, and the
 ///    deadline has not passed (unless `no_deadline` is set).
 /// 6. Checks `allow_multiple` — when `false`, each address may only hold one
-///    ticket across all transactions. The reserved
-///    `max_tickets_per_address` field is not enforced yet.
+///    ticket across all transactions. When `max_tickets_per_address > 0`, the
+///    per-address cap is enforced and exceeding it returns
+///    [`Error::ExceedsMaxTicketsPerAddress`].
 /// 7. Performs a double-read concurrency guard (snapshot vs. persisted state).
 /// 8. Writes each [`Ticket`] to persistent storage under
 ///    [`DataKey::Ticket(id)`](crate::DataKey::Ticket).
@@ -343,7 +344,42 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         );
     }
 
+        fix/security-checks-effects-763
     //  10. Bump TTLs
+
+    let token_client = token::Client::new(&env, &raffle.payment_token);
+    let _ = token_client
+        .try_transfer(&buyer, env.current_contract_address(), &total_price)
+        .map_err(|_| Error::TokenTransferFailed)?;
+
+    if protocol_fee > 0 {
+        if let Some(treasury) = &raffle.treasury_address {
+            token_client.transfer(&env.current_contract_address(), treasury, &protocol_fee);
+        }
+        let prev: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AccumulatedFees)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccumulatedFees, &(prev + protocol_fee));
+    }
+
+    TicketPurchased {
+        buyer,
+        ticket_ids,
+        quantity,
+        ticket_price: raffle.ticket_price,
+        effective_ticket_price: raffle.ticket_price,
+        total_paid: total_price,
+        protocol_fee,
+        timestamp,
+    }
+    .publish(&env);
+
+    // Opportunistically bump TTLs so a long-running raffle doesn't get archived.
+        master
     bump_raffle_ttl(&env, raffle.tickets_sold);
 
     Ok(raffle.tickets_sold)
@@ -412,6 +448,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
+        fix/security-checks-effects-763
     let total_price = raffle
         .ticket_price
         .checked_mul(quantity as i128)
@@ -420,6 +457,9 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
         .checked_mul(raffle.protocol_fee_bp as i128)
         .ok_or(Error::ArithmeticOverflow)?
         / 10000;
+
+    let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
+        master
 
     //  3. Verify no concurrent modification
     let persisted = crate::read_raffle(&env)?;

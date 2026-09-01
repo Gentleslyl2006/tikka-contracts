@@ -1,16 +1,10 @@
 import { Alerter } from './alert/alerter';
 import { loadAndValidateConfig } from './config';
-import { OraclePipeline } from './pipeline';
+import { createPipeline } from './pipeline';
 
 /**
- * Bootstrap entry point. Wires the full oracle pipeline:
- * - KeyService for cryptographic operations
- * - EventListenerService for polling RandomnessRequested events
- * - RequestQueue for job queuing
- * - DeduplicationStore for duplicate detection
- * - VrfService for randomness proof generation
- * - TxSubmitterService for submitting provide_randomness transactions
- * - GracefulShutdown for clean shutdown with job draining
+ * Bootstrap entry point. Wires the full oracle pipeline and exposes /health and
+ * /metrics for observability.
  */
 async function main(): Promise<void> {
   const config = loadAndValidateConfig();
@@ -19,6 +13,8 @@ async function main(): Promise<void> {
     webhookUrl: config.alertWebhookUrl,
     rateLimitMs: config.alertRateLimitMs,
   });
+
+  startHealthServer();
 
   if (!alerter.enabled) {
     console.warn('ALERT_WEBHOOK_URL is not set; operational alerts are disabled.');
@@ -32,9 +28,19 @@ async function main(): Promise<void> {
   }
 
   // Create and start the oracle pipeline
-  const pipeline = new OraclePipeline({
-    config,
+  const pipeline = createPipeline(config, {
     alerter,
+  });
+
+  // Register signal handlers
+  process.on('SIGINT', () => {
+    console.log('SIGINT received. Initiating graceful shutdown...');
+    void pipeline.shutdown();
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Initiating graceful shutdown...');
+    void pipeline.shutdown();
   });
 
   // Start listening for events from the factory contract

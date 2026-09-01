@@ -278,9 +278,13 @@ pub enum ContractError {
     /// `create_raffle` could not read the treasury address (factory not fully
     /// initialized). Code 19.
     TreasuryNotSet = 19,
+    /// Recurring raffle schedule was not found. Code 20.
     RecurringNotFound = 20,
+    /// Recurring round interval has not elapsed yet. Code 21.
     IntervalNotElapsed = 21,
+    /// Recurring raffle reached its configured maximum rounds. Code 22.
     MaxRoundsReached = 22,
+    /// Recurring raffle schedule is inactive. Code 23.
     RecurringInactive = 23,
     /// `create_raffle` was called while creation is paused via
     /// `set_creation_paused` (#611). Distinct from `ContractPaused`, which
