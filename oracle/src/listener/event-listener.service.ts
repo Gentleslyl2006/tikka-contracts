@@ -7,6 +7,7 @@ import {
 } from '../metrics/metrics';
 import { RequestQueue } from '../queue/request-queue';
 import { LedgerCheckpointStore } from './ledger-checkpoint';
+import { childLogger, type Logger } from '../logging/logger';
 
 export interface EventListenerOptions {
   pollIntervalMs?: number;
@@ -30,6 +31,7 @@ export class EventListenerService {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly alerter?: Alerter;
   private readonly rpcUnreachableThreshold: number;
+  private readonly logger: Logger;
   private startLedger: number;
   private listening = false;
   private consecutiveRpcFailures = 0;

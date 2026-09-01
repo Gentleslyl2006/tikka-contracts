@@ -116,8 +116,40 @@ pub enum DataKey {
     ProtocolFeeBP,
     /// Treasury [`Address`] that receives protocol fees.
     Treasury,
-    /// Boolean pause flag stored in instance storage. When `true`,
-    /// [`RaffleFactory::create_raffle`] is blocked.
+    /// Master factory pause flag. When `true`, halts the entire factory
+    /// (`create_raffle` and all other mutating factory operations are blocked).
+    ///
+    /// # Pause-flag precedence
+    ///
+    /// The protocol exposes five pause surfaces. They compose as a logical OR:
+    /// an operation is blocked if **any** flag whose scope covers it is set.
+    /// There is no override or hierarchy — clearing one flag never clears
+    /// another, so each must be lifted independently.
+    ///
+    /// | Flag | Set / clear entrypoints | Scope: blocks |
+    /// |---|---|---|
+    /// | `DataKey::Paused` (factory) | `pause_factory` / `unpause_factory` (query: `is_factory_paused`) | `create_raffle` and every mutating factory op |
+    /// | global pause | `emergency_pause_all` / `emergency_unpause_all` (query: `is_global_paused`) | `create_raffle` **and** ticket purchases on every already-deployed instance (via instance-side `require_global_not_paused`) |
+    /// | `DataKey::CreationPaused` | `set_creation_paused` (query: `is_creation_paused`) | `create_raffle` only — all other ops, reads, and in-flight raffles unaffected |
+    /// | `DataKey::Paused` (instance) | `pause` / `unpause` | that single instance's mutating ops |
+    /// | `Raffle::ticket_sales_paused` | `pause_ticket_sales` / `resume_ticket_sales` | ticket purchases on that single instance |
+    ///
+    /// Answers to the composition questions:
+    /// - `emergency_pause_all` blocks `create_raffle` even when `Paused` is
+    ///   `false`, because both flags are checked independently.
+    /// - `unpause_factory` clears **only** `DataKey::Paused`; it does **not**
+    ///   clear the global pause. Use `emergency_unpause_all` for that.
+    /// - `require_global_not_paused` in the instance consults the **global**
+    ///   flag (`is_global_paused`), so `pause_factory` does **not** stop ticket
+    ///   sales on existing raffles — `emergency_pause_all` does.
+    ///
+    /// # Incident response
+    ///
+    /// To stop everything with a single call, use **`emergency_pause_all`**. It
+    /// is the only switch that halts both new-raffle creation and ticket
+    /// purchases on all already-deployed instances. See
+    /// [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`oracle/RUNBOOK.md`](../../../oracle/RUNBOOK.md).
     Paused,
     /// Pending admin [`Address`] set by
     /// [`RaffleFactory::transfer_factory_admin`]; cleared on acceptance or

@@ -1,5 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { decodeSecretKey, zeroizeBuffer } from './secret-key';
+import { logger } from '../logging/logger';
 
 export interface SecretsAdapter {
   getSecret(key: string): Promise<Buffer>;
@@ -51,7 +52,7 @@ export class KeyService {
       }
       this.initialized = true;
     } catch {
-      console.error('Failed to initialize KeyService: Invalid or missing oracle secret key.');
+      logger.error('Failed to initialize KeyService: Invalid or missing oracle secret key.');
       throw new Error('KeyService initialization failed.');
     }
   }

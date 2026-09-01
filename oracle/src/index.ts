@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   startHealthServer();
 
   if (!alerter.enabled) {
-    console.warn('ALERT_WEBHOOK_URL is not set; operational alerts are disabled.');
+    logger.warn('ALERT_WEBHOOK_URL is not set; operational alerts are disabled.');
   } else {
     await alerter.notify({
       type: 'process_start',
@@ -48,6 +48,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error(`Oracle service failed to start: ${error instanceof Error ? error.message : String(error)}`);
+  logger.error(`Oracle service failed to start: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 });
