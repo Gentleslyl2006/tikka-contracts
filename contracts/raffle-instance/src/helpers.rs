@@ -251,7 +251,32 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .map(|a| a / 10000)
 }
 
-    initial_index
+fn resolve_unique_winner(
+    env: &Env,
+    seed: u64,
+    attempt_index: u32,
+    total_tickets: u32,
+    winners: &Vec<Address>,
+    candidate: u32,
+) -> u32 {
+    let mut idx = candidate;
+    let mut tries = 0u32;
+    loop {
+        let owner = get_ticket_owner(env, idx + 1);
+        let already_won = winners.iter().any(|winner| owner.as_ref() == Some(winner));
+        if !already_won {
+            return idx;
+        }
+
+        // Advance deterministically so repeated collisions keep the same
+        // pseudo-random selection path but avoid selecting the same winner twice.
+        let step = (seed.wrapping_add(attempt_index).wrapping_add(tries + 1)) % total_tickets;
+        idx = (idx + step + 1) % total_tickets;
+        tries += 1;
+        if tries > total_tickets {
+            return candidate;
+        }
+    }
 }
 
 /// Finalize the raffle using a pre-computed `u64` seed.
@@ -342,17 +367,6 @@ pub(crate) fn do_finalize_with_seed(
     for _ in 0..raffle.prizes.len() {
         claimed_winners.push_back(false);
     }
-
-    env.storage().persistent().set(
-        &DataKey::RandomnessSeed,
-        &FairnessMetadata {
-            seed,
-            randomness_source: raffle.randomness_source.clone(),
-            winning_ticket_indices: winning_ticket_ids.clone(),
-            draw_timestamp: env.ledger().timestamp(),
-            draw_sequence: env.ledger().sequence(),
-        },
-    );
 
     env.storage().persistent().set(
         &DataKey::RandomnessSeed,

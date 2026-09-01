@@ -189,13 +189,13 @@ pub enum Error {
     InsufficientAccumulatedFees = 56,
     PrizeConfigurationLocked = 57,
     ExceedsMaxTicketsPerTx = 58,
-    ExceedsMaxTicketsPerAddress = 65,
     DrawingAlreadyInProgress = 59,
     InvalidStatusForDrawingTransition = 60, // Note: This seems to be a copy-paste error in the original code.
     DrawingAlreadyComplete = 61,
     InvalidEndTime = 62,
     InvalidAdminAddress = 63,
     RandomnessTooEarly = 64,
+    ExceedsMaxTicketsPerAddress = 67,
     CancelTimelockActive = 65,
     CancelNotScheduled = 66,
 }
@@ -756,8 +756,6 @@ if config.randomness_source == RandomnessSource::External {
         // To complete the refactor, this logic should be moved to `admin.rs`.
         Err(Error::InvalidParameters)
     }
-
-}
 
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
     /// from being archived by Soroban's TTL expiry.
