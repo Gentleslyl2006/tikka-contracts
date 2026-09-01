@@ -251,9 +251,6 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .map(|a| a / 10000)
 }
 
-    initial_index
-}
-
 /// Finalize the raffle using a pre-computed `u64` seed.
 ///
 /// This is the common finalization path shared by all three randomness modes
@@ -331,7 +328,7 @@ pub(crate) fn do_finalize_with_seed(
         winners.push_back(winner.clone());
         WinnerDrawn {
             winner,
-            ticket_id: idx,
+            ticket_id: idx + 1,
             tier_index: i,
             timestamp: env.ledger().timestamp(),
         }
@@ -367,6 +364,7 @@ pub(crate) fn do_finalize_with_seed(
     );
 
     raffle.winners = winners.clone();
+    raffle.claimed_winners = claimed_winners;
     raffle.finalized_at = Some(env.ledger().timestamp());
     transition_status(
         env,

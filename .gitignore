@@ -37,6 +37,10 @@ CLAUDE.md
 # Test snapshots
 test_snapshots/
 
+# Python tooling cache (scripts/*.py)
+__pycache__/
+*.pyc
+
 # Skills
 .windsurf/
 # ./skills
