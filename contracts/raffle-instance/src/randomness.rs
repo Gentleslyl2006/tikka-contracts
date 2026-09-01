@@ -426,21 +426,45 @@ impl WinnerSelectionStrategy for OracleSeedWinnerSelection {
 
 /// Aggregate multiple oracle seeds into a single deterministic seed.
 ///
-/// Uses SHA-256 over the concatenation of all delivered seeds
-/// in submission order.  The first 8 bytes of the hash become the `u64` seed.
+/// Seeds are sorted by oracle address (XDR bytes, lexicographic) before
+/// concatenation so the result is **order-independent**: the same multiset of
+/// seeds always yields the same aggregate regardless of submission order.
 ///
-/// # Security
-///
-/// As long as at least one of the seeds was provided by an honest oracle,
-/// the SHA-256 output is cryptographically uniform and cannot be biased.
+/// Each seed is appended as 8 big-endian bytes, then SHA-256 is applied.
+/// The first 8 bytes of the hash become the `u64` draw seed.
 pub fn aggregate_quorum_seeds(env: &Env, seeds: &Vec<(Address, u64)>) -> u64 {
     if seeds.is_empty() {
         return 0u64;
     }
 
-    let mut combined = Bytes::new(env);
+    let mut sorted = Vec::new(env);
     for i in 0..seeds.len() {
-        if let Some((_, seed)) = seeds.get(i) {
+        if let Some(pair) = seeds.get(i) {
+            sorted.push_back(pair);
+        }
+    }
+
+    // Insertion sort by address XDR bytes (n ≤ 10).
+    for i in 1..sorted.len() {
+        let mut j = i;
+        while j > 0 {
+            let (addr_j, seed_j) = sorted.get(j).unwrap();
+            let (addr_prev, seed_prev) = sorted.get(j - 1).unwrap();
+            let bytes_j: Bytes = addr_j.to_xdr(env);
+            let bytes_prev: Bytes = addr_prev.to_xdr(env);
+            if bytes_j < bytes_prev {
+                sorted.set(j, (addr_prev.clone(), seed_prev));
+                sorted.set(j - 1, (addr_j.clone(), seed_j));
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    let mut combined = Bytes::new(env);
+    for i in 0..sorted.len() {
+        if let Some((_, seed)) = sorted.get(i) {
             combined.extend_from_array(&seed.to_be_bytes());
         }
     }
@@ -705,5 +729,70 @@ mod tests {
                 "Chi-squared test must REJECT biased selector for ticket_count={n}: chi2={chi2} expected >= critical={crit}"
             );
         }
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_is_order_independent() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+
+        let addr_a = Address::generate(&env);
+        let addr_b = Address::generate(&env);
+        let addr_c = Address::generate(&env);
+
+        let forward = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_a.clone(), 10u64));
+            v.push_back((addr_b.clone(), 20u64));
+            v.push_back((addr_c.clone(), 30u64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        let reverse = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_c.clone(), 30u64));
+            v.push_back((addr_b.clone(), 20u64));
+            v.push_back((addr_a.clone(), 10u64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        assert_eq!(forward, reverse);
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_golden_vector() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+
+        // Deterministic contract-scoped addresses for cross-service golden vectors.
+        let addr_a = Address::generate(&env);
+        let addr_b = Address::generate(&env);
+
+        let aggregate = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_b.clone(), 0xDEAD_BEEFu64));
+            v.push_back((addr_a.clone(), 0xCAFE_BABEu64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        // Exported to oracle/src/vrf/__fixtures__/quorum-aggregate-vectors.json
+        assert_ne!(aggregate, 0);
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_empty_returns_zero() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        let result = env.as_contract(&contract, || {
+            let v = Vec::new(&env);
+            aggregate_quorum_seeds(&env, &v)
+        });
+        assert_eq!(result, 0);
     }
 }

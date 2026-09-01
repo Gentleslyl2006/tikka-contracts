@@ -53,7 +53,7 @@ use crate::{
 /// | `end_time` | Must be in the future unless `no_deadline = true`; `no_deadline` requires `end_time == 0` |
 /// | `max_tickets` | `1 ≤ max_tickets ≤ MAX_TICKETS_LIMIT` (100 000) |
 /// | `max_tickets_per_tx` | `1 ≤ max_tickets_per_tx ≤ max_tickets` |
-/// | `max_tickets_per_address` | Not currently validated or enforced |
+/// | `max_tickets_per_address` | `≤ max_tickets`; `0` = unlimited. Enforced per-address at purchase time (both `buy_tickets` and `buy_tickets_for`) via `Error::ExceedsMaxTicketsPerAddress` |
 /// | `min_tickets` | `min_tickets ≤ max_tickets` |
 /// | `ticket_price` | `≥ MIN_TICKET_PRICE` (10 000 stroops) |
 /// | `prize_amount` | `ticket_price ≤ prize_amount ≤ MAX_PRIZE_AMOUNT` |
