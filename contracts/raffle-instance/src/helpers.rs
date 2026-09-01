@@ -251,9 +251,6 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .map(|a| a / 10000)
 }
 
-    initial_index
-}
-
 /// Finalize the raffle using a pre-computed `u64` seed.
 ///
 /// This is the common finalization path shared by all three randomness modes
@@ -331,7 +328,7 @@ pub(crate) fn do_finalize_with_seed(
         winners.push_back(winner.clone());
         WinnerDrawn {
             winner,
-            ticket_id: idx,
+            ticket_id: idx + 1,
             tier_index: i,
             timestamp: env.ledger().timestamp(),
         }
@@ -356,6 +353,7 @@ pub(crate) fn do_finalize_with_seed(
     );
 
     raffle.winners = winners.clone();
+    raffle.claimed_winners = claimed_winners;
     raffle.finalized_at = Some(env.ledger().timestamp());
     transition_status(
         env,
@@ -365,6 +363,7 @@ pub(crate) fn do_finalize_with_seed(
     )?;
     raffle.finalized_at = Some(env.ledger().timestamp());
     write_raffle(env, &raffle);
+    record_leaderboard(env, &raffle);
 
     env.storage()
         .instance()
@@ -375,6 +374,7 @@ pub(crate) fn do_finalize_with_seed(
     env.storage()
         .instance()
         .remove(&DataKey::RandomnessRequestLedger);
+    clear_quorum_storage(env);
     env.storage().instance().set(&DataKey::DrawingLock, &false);
 
     RaffleFinalized {
@@ -425,4 +425,22 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         &Symbol::new(env, "record_leaderboard_entry"),
         args,
     );
+}
+
+/// Remove all quorum seed storage so a re-draw can accept the same oracles again.
+pub(crate) fn clear_quorum_storage(env: &Env) {
+    if let Some(submitted) = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<Address>>(&DataKey::QuorumSubmittedOracles)
+    {
+        for i in 0..submitted.len() {
+            if let Some(addr) = submitted.get(i) {
+                env.storage().persistent().remove(&DataKey::QuorumSeed(addr));
+            }
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::QuorumSubmittedOracles);
+    }
 }
