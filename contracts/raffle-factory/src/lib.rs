@@ -11,6 +11,10 @@ use soroban_sdk::testutils::Address as _;
 
 mod events;
 
+pub mod registry;
+
+pub use registry::{CreatorProfile, LeaderboardMetric, PartnerStats};
+
 use raffle_shared::{
     effective_limit, AdminOp, FairnessData, PageResultRaffles, PaginationParams, RaffleConfig,
     RecurringRaffleConfig,
@@ -43,27 +47,7 @@ pub struct PendingOp {
     pub proposed_by: Address,
 }
 
-/// On-chain creator profile with display name, verified badge, and track record.
-///
-/// Creators can self-set a display name via [`RaffleFactory::set_profile_name`],
-/// and the admin can grant a verified badge via [`RaffleFactory::set_verified`].
-/// The `raffles_created` counter is automatically incremented on each successful
-/// [`RaffleFactory::create_raffle`] call.
-///
-/// Frontends can query profiles with [`RaffleFactory::get_profile`] to show
-/// creator reputation, verified status, and activity level without off-chain
-/// infrastructure.
-#[derive(Clone)]
-#[contracttype]
-pub struct CreatorProfile {
-    /// Self-set display name (max length [`MAX_DESCRIPTION_LENGTH`]).
-    /// Empty string if never set.
-    pub name: soroban_sdk::String,
-    /// Admin-granted verified badge. `true` indicates a trusted/reputable organizer.
-    pub verified: bool,
-    /// Number of raffles this creator has successfully launched.
-    pub raffles_created: u32,
-}
+
 
 /// A periodic state snapshot recording factory health at a milestone raffle
 /// count.
@@ -132,8 +116,40 @@ pub enum DataKey {
     ProtocolFeeBP,
     /// Treasury [`Address`] that receives protocol fees.
     Treasury,
-    /// Boolean pause flag stored in instance storage. When `true`,
-    /// [`RaffleFactory::create_raffle`] is blocked.
+    /// Master factory pause flag. When `true`, halts the entire factory
+    /// (`create_raffle` and all other mutating factory operations are blocked).
+    ///
+    /// # Pause-flag precedence
+    ///
+    /// The protocol exposes five pause surfaces. They compose as a logical OR:
+    /// an operation is blocked if **any** flag whose scope covers it is set.
+    /// There is no override or hierarchy — clearing one flag never clears
+    /// another, so each must be lifted independently.
+    ///
+    /// | Flag | Set / clear entrypoints | Scope: blocks |
+    /// |---|---|---|
+    /// | `DataKey::Paused` (factory) | `pause_factory` / `unpause_factory` (query: `is_factory_paused`) | `create_raffle` and every mutating factory op |
+    /// | global pause | `emergency_pause_all` / `emergency_unpause_all` (query: `is_global_paused`) | `create_raffle` **and** ticket purchases on every already-deployed instance (via instance-side `require_global_not_paused`) |
+    /// | `DataKey::CreationPaused` | `set_creation_paused` (query: `is_creation_paused`) | `create_raffle` only — all other ops, reads, and in-flight raffles unaffected |
+    /// | `DataKey::Paused` (instance) | `pause` / `unpause` | that single instance's mutating ops |
+    /// | `Raffle::ticket_sales_paused` | `pause_ticket_sales` / `resume_ticket_sales` | ticket purchases on that single instance |
+    ///
+    /// Answers to the composition questions:
+    /// - `emergency_pause_all` blocks `create_raffle` even when `Paused` is
+    ///   `false`, because both flags are checked independently.
+    /// - `unpause_factory` clears **only** `DataKey::Paused`; it does **not**
+    ///   clear the global pause. Use `emergency_unpause_all` for that.
+    /// - `require_global_not_paused` in the instance consults the **global**
+    ///   flag (`is_global_paused`), so `pause_factory` does **not** stop ticket
+    ///   sales on existing raffles — `emergency_pause_all` does.
+    ///
+    /// # Incident response
+    ///
+    /// To stop everything with a single call, use **`emergency_pause_all`**. It
+    /// is the only switch that halts both new-raffle creation and ticket
+    /// purchases on all already-deployed instances. See
+    /// [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) and
+    /// [`oracle/RUNBOOK.md`](../../../oracle/RUNBOOK.md).
     Paused,
     /// Pending admin [`Address`] set by
     /// [`RaffleFactory::transfer_factory_admin`]; cleared on acceptance or
@@ -161,14 +177,7 @@ pub enum DataKey {
     /// Unix timestamp of the most recent successful raffle creation for each
     /// non-whitelisted creator address. Used by the rate limiter.
     LastCreationTime(Address),
-    /// Whitelist flag for partner addresses. When `true`, the address bypasses
-    /// the creation rate limiter entirely.
-    WhitelistedPartner(Address),
-    /// Aggregate dashboard stats for a whitelisted partner (#488).
-    PartnerStats(Address),
-    /// Ordered list of currently whitelisted partner addresses for
-    /// [`RaffleFactory::get_all_partners`] pagination.
-    PartnersList,
+
     /// Cumulative ticket-sale volume denominated in a specific asset. Updated
     /// by [`RaffleFactory::record_volume`] on every ticket purchase.
     TotalVolumePerAsset(Address),
@@ -210,25 +219,7 @@ pub struct ProtocolStats {
     pub total_unique_participants: u32,
 }
 
-/// Per-partner aggregate statistics for the partner dashboard API (#488).
-///
-/// Updated on every successful [`RaffleFactory::create_raffle`] by a
-/// whitelisted partner. `total_volume` / `total_fees_generated` start at zero
-/// and are reserved for future fee/volume attribution hooks.
-#[derive(Clone, Debug, PartialEq)]
-#[contracttype]
-pub struct PartnerStats {
-    /// Number of raffles created by this partner while whitelisted.
-    pub total_raffles: u32,
-    /// Cumulative ticket-sale volume attributed to this partner.
-    pub total_volume: i128,
-    /// Cumulative protocol fees generated by this partner's raffles.
-    pub total_fees_generated: i128,
-    /// Ledger timestamp of the partner's first raffle creation.
-    pub first_raffle_at: u64,
-    /// Ledger timestamp of the partner's most recent raffle creation.
-    pub latest_raffle_at: u64,
-}
+
 
 /// Errors returned by the factory contract.
 ///
@@ -278,9 +269,13 @@ pub enum ContractError {
     /// `create_raffle` could not read the treasury address (factory not fully
     /// initialized). Code 19.
     TreasuryNotSet = 19,
+    /// Recurring raffle schedule was not found. Code 20.
     RecurringNotFound = 20,
+    /// Recurring round interval has not elapsed yet. Code 21.
     IntervalNotElapsed = 21,
+    /// Recurring raffle reached its configured maximum rounds. Code 22.
     MaxRoundsReached = 22,
+    /// Recurring raffle schedule is inactive. Code 23.
     RecurringInactive = 23,
     /// `create_raffle` was called while creation is paused via
     /// `set_creation_paused` (#611). Distinct from `ContractPaused`, which
