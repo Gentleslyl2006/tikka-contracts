@@ -10,8 +10,8 @@ describe('Alerter', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env.ALERT_WEBHOOK_URL;
-    delete process.env.ALERT_RATE_LIMIT_MS;
+    delete process.env['ALERT_WEBHOOK_URL'];
+    delete process.env['ALERT_RATE_LIMIT_MS'];
   });
 
   afterEach(() => {
@@ -132,8 +132,8 @@ describe('Alerter', () => {
   });
 
   it('reads the webhook URL and rate limit from the environment', async () => {
-    process.env.ALERT_WEBHOOK_URL = webhookUrl;
-    process.env.ALERT_RATE_LIMIT_MS = '5000';
+    process.env['ALERT_WEBHOOK_URL'] = webhookUrl;
+    process.env['ALERT_RATE_LIMIT_MS'] = '5000';
     const fetchImpl = mockFetch();
     const alerter = new Alerter({ fetchImpl });
 
@@ -142,5 +142,41 @@ describe('Alerter', () => {
 
     const [url] = fetchImpl.mock.calls[0];
     expect(url).toBe(webhookUrl);
+  });
+
+  it('rejects alerts containing Stellar, Hex, or Base64 secret key patterns', async () => {
+    const fetchImpl = mockFetch();
+    const alerter = new Alerter({ webhookUrl, fetchImpl });
+
+    // Stellar secret
+    await expect(
+      alerter.notify({
+        type: 'leak_check',
+        severity: 'critical',
+        message: 'A secret key leaked: SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+      }),
+    ).rejects.toThrow('Stellar secret key detected');
+
+    // Hex secret
+    await expect(
+      alerter.notify({
+        type: 'leak_check',
+        severity: 'critical',
+        message: 'A hex key leaked',
+        details: { key: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2' },
+      }),
+    ).rejects.toThrow('Hex secret key detected');
+
+    // Config object containing secretKey
+    await expect(
+      alerter.notify({
+        type: 'leak_check',
+        severity: 'critical',
+        message: 'A config leaked',
+        details: { config: { secretKey: 'someKey', rpcUrl: 'http://localhost' } },
+      }),
+    ).rejects.toThrow('Secret key field "secretKey" detected');
+
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
