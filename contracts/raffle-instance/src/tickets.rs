@@ -122,7 +122,7 @@ use crate::helpers::bump_raffle_ttl;
 ///
 /// See also: [`docs/EVENTS.md`](../../../../docs/EVENTS.md) —
 /// `TicketPurchased`, `DrawTriggered`, `RandomnessRequested`.
-pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32, Error> {
+fn validate_purchase_preconditions(env: &Env, raffle: &crate::Raffle, quantity: u32) -> Result<(), Error> {
     let drawing_lock: bool = env
         .storage()
         .instance()
@@ -134,13 +134,11 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     if quantity == 0 {
         return Err(Error::InvalidQuantity);
     }
-    let mut raffle = crate::read_raffle(&env)?;
     if quantity > raffle.max_tickets_per_tx {
         return Err(Error::ExceedsMaxTicketsPerTx);
     }
-    buyer.require_auth();
-    require_not_paused(&env)?;
-    crate::require_global_not_paused(&env)?;
+    require_not_paused(env)?;
+    crate::require_global_not_paused(env)?;
 
     if raffle.status != RaffleStatus::Active {
         return Err(Error::RaffleInactive);
@@ -154,6 +152,13 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     if !raffle.no_deadline && env.ledger().timestamp() >= raffle.end_time {
         return Err(Error::RaffleExpired);
     }
+    Ok(())
+}
+
+pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32, Error> {
+    buyer.require_auth();
+    let mut raffle = crate::read_raffle(&env)?;
+    validate_purchase_preconditions(&env, &raffle, quantity)?;
 
     let snapshot_sold = raffle.tickets_sold;
     let current_count: u32 = env
@@ -339,32 +344,9 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
 }
 
 pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quantity: u32) -> Result<u32, Error> {
-    let drawing_lock: bool = env.storage().instance().get(&crate::DataKey::DrawingLock).unwrap_or(false);
-    if drawing_lock {
-        return Err(Error::DrawingAlreadyInProgress);
-    }
-    if quantity == 0 {
-        return Err(Error::InvalidQuantity);
-    }
-    let mut raffle = crate::read_raffle(&env)?;
-    if quantity > raffle.max_tickets_per_tx {
-        return Err(Error::ExceedsMaxTicketsPerTx);
-    }
     buyer.require_auth();
-    require_not_paused(&env)?;
-
-    if raffle.status != RaffleStatus::Active {
-        return Err(Error::RaffleInactive);
-    }
-    if raffle.ticket_sales_paused {
-        return Err(Error::ContractPaused);
-    }
-    if !raffle.prize_deposited {
-        return Err(Error::InvalidStateTransition);
-    }
-    if !raffle.no_deadline && env.ledger().timestamp() > raffle.end_time {
-        return Err(Error::RaffleExpired);
-    }
+    let mut raffle = crate::read_raffle(&env)?;
+    validate_purchase_preconditions(&env, &raffle, quantity)?;
 
     let snapshot_sold = raffle.tickets_sold;
     let current_count: u32 = env.storage().persistent().get(&DataKey::TicketCount(recipient.clone())).unwrap_or(0);
