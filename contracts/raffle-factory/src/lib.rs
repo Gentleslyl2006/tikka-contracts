@@ -202,6 +202,8 @@ pub enum DataKey {
     /// blocks `create_raffle`, leaving all other admin operations, reads, and
     /// any raffles already in flight unaffected.
     CreationPaused,
+    /// Used to authorize factory-deployed raffles in cross-contract calls.
+    ValidRaffle(Address),
 }
 
 /// A read-only snapshot of key factory metrics returned by
@@ -438,6 +440,10 @@ fn create_raffle_internal(
     env.storage()
         .persistent()
         .set(&DataKey::NextRaffleId, &(stable_id.saturating_add(1)));
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::ValidRaffle(raffle_address.clone()), &true);
 
     let mut creator_raffles: Vec<Address> = env
         .storage()
@@ -1911,6 +1917,9 @@ impl RaffleFactory {
         total_volume: i128,
     ) -> Result<(), ContractError> {
         raffle_address.require_auth();
+        if !env.storage().persistent().has(&DataKey::ValidRaffle(raffle_address.clone())) {
+            return Err(ContractError::NotAuthorized);
+        }
         Self::upsert_leaderboard(&env, &DataKey::TopByTickets, raffle_address.clone(), tickets_sold);
         Self::upsert_leaderboard(&env, &DataKey::TopByPrize, raffle_address.clone(), prize_amount);
         Self::upsert_leaderboard(&env, &DataKey::TopByVolume, raffle_address, total_volume);

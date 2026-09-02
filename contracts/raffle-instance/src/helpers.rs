@@ -386,7 +386,6 @@ pub(crate) fn do_finalize_with_seed(
     )?;
     raffle.finalized_at = Some(env.ledger().timestamp());
     write_raffle(env, &raffle);
-    record_leaderboard(env, &raffle);
 
     env.storage()
         .instance()
@@ -411,6 +410,7 @@ pub(crate) fn do_finalize_with_seed(
     }
     .publish(env);
 
+    record_leaderboard(env, &raffle);
     bump_raffle_ttl(env, total_tickets);
     Ok(())
 }
@@ -421,11 +421,25 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         None => return,
     };
     let raffle_id = env.current_contract_address();
-    let tickets = raffle.tickets_sold as i128;
-    let volume = raffle.ticket_price.saturating_mul(tickets);
+    
+    let tickets = raffle.tickets_sold;
+    let max_tickets = raffle.max_tickets;
+    let eb_limit = (max_tickets.saturating_mul(raffle.early_bird_ticket_percentage)) / 100;
+    
+    let eb_tickets = if tickets < eb_limit { tickets } else { eb_limit };
+    let norm_tickets = tickets.saturating_sub(eb_tickets);
+    
+    let discounted_price = raffle.ticket_price
+        .saturating_mul(10000_i128.saturating_sub(raffle.early_bird_discount_bp as i128))
+        / 10000;
+        
+    let volume = (eb_tickets as i128).saturating_mul(discounted_price)
+        .saturating_add((norm_tickets as i128).saturating_mul(raffle.ticket_price));
+
+    let tickets_i128 = tickets as i128;
     let args: Vec<Val> = (
         raffle_id.clone(),
-        tickets,
+        tickets_i128,
         raffle.prize_amount,
         volume,
     )
