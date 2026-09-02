@@ -760,6 +760,11 @@ fn quorum_storage_cleared_allows_redraw() {
 
     // Simulate a re-draw by re-arming drawing state (same oracles, new request).
     env.as_contract(&contract_id, || {
+        let has_submitted = env.storage().persistent().has(&DataKey::QuorumSubmittedOracles);
+        assert!(!has_submitted, "QuorumSubmittedOracles should be cleared after finalization");
+        assert!(!env.storage().persistent().has(&DataKey::QuorumSeed(oracle_a.clone())), "QuorumSeed for oracle_a should be cleared");
+        assert!(!env.storage().persistent().has(&DataKey::QuorumSeed(oracle_b.clone())), "QuorumSeed for oracle_b should be cleared");
+
         let mut raffle = crate::read_raffle(&env).unwrap();
         raffle.status = RaffleStatus::Drawing;
         crate::write_raffle(&env, &raffle);
@@ -767,9 +772,6 @@ fn quorum_storage_cleared_allows_redraw() {
         env.storage()
             .instance()
             .set(&DataKey::RandomnessRequestId, &999u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::QuorumSubmittedOracles, &Vec::<Address>::new(&env));
     });
 
     // Same oracles can submit again on the new request.

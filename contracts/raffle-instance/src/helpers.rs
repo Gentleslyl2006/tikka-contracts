@@ -322,6 +322,7 @@ pub(crate) fn do_finalize_with_seed(
     mut raffle: Raffle,
     seed: u64,
     randomness_type: RandomnessType,
+    quorum_contributions: Option<Vec<(Address, u64)>>,
 ) -> Result<(), Error> {
     let total_tickets = raffle.tickets_sold;
     if total_tickets == 0 {
@@ -370,6 +371,7 @@ pub(crate) fn do_finalize_with_seed(
             draw_timestamp: env.ledger().timestamp(),
             draw_sequence: env.ledger().sequence(),
             unique_winners: raffle.unique_winners,
+            quorum_contributions,
         },
     );
 

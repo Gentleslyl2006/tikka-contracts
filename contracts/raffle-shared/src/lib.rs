@@ -322,6 +322,8 @@ pub struct FairnessData {
     pub draw_sequence: u32,
     /// Whether unique-address winner fairness was enabled for this draw (#485).
     pub unique_winners: bool,
+    /// The quorum oracles that contributed and their submitted seeds, if applicable.
+    pub quorum_contributions: Option<Vec<(Address, u64)>>,
 }
 
 /// Generic pagination request for list queries.
