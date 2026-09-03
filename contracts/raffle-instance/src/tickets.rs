@@ -61,8 +61,9 @@ use crate::helpers::bump_raffle_ttl;
 /// 5. Verifies the raffle is `Active`, prize has been deposited, and the
 ///    deadline has not passed (unless `no_deadline` is set).
 /// 6. Checks `allow_multiple` — when `false`, each address may only hold one
-///    ticket across all transactions. The reserved
-///    `max_tickets_per_address` field is not enforced yet.
+///    ticket across all transactions. When `max_tickets_per_address > 0`, the
+///    per-address cap is enforced and exceeding it returns
+///    [`Error::ExceedsMaxTicketsPerAddress`].
 /// 7. Performs a double-read concurrency guard (snapshot vs. persisted state).
 /// 8. Writes each [`Ticket`] to persistent storage under
 ///    [`DataKey::Ticket(id)`](crate::DataKey::Ticket).
@@ -325,7 +326,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         ticket_ids,
         quantity,
         ticket_price: raffle.ticket_price,
-        effective_ticket_price: effective_price,
+        effective_ticket_price: raffle.ticket_price,
         total_paid: total_price,
         protocol_fee,
         timestamp,
@@ -388,7 +389,6 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
-    let total_price = raffle.ticket_price.checked_mul(quantity as i128).ok_or(Error::InvalidParameters)?;
     let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
 
     let persisted = crate::read_raffle(&env)?;

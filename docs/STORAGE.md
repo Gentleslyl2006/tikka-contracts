@@ -146,6 +146,29 @@ stellar contract extend \
 
 Persistent keys need `--durability persistent` and `--key …` (or batched tooling). Ticket keys are **independent** of the instance TTL — bumping only the instance is not enough for long-running sales.
 
+## Tombstone model for `clean_old_raffle`
+
+`clean_old_raffle` removes a raffle from the stable map without shifting IDs:
+
+- `RaffleById(id)` is removed — the slot becomes a tombstone.
+- `NextRaffleId` is never decremented — IDs are never reused.
+- `RaffleCount` is decremented — this is the count of **live** raffles.
+- `CreatorRaffles` and `CategoryRaffles` are pruned — tombstones do not appear in per-creator or per-category views.
+
+### What `total` means in pagination
+
+- `get_raffles_page` returns `total = RaffleCount` (live raffles only).
+- `get_raffles_by_creator` returns `total = creator_vec.len()` (after pruning).
+- `get_raffles_by_category` returns `total = category_vec.len()` (after pruning).
+
+### Pagination semantics over a sparse ID space
+
+`get_raffles_page` collects all live raffles by scanning `RaffleById(0..NextRaffleId)`, skipping tombstones, then applies `offset` and `limit` on the dense live list. This guarantees:
+
+- No gaps or repeats across pages.
+- `has_more` is consistent with `total`.
+- Tombstoned raffles are invisible to every query path.
+
 ## Related docs
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — deploy then operate
