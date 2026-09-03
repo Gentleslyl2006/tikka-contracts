@@ -85,7 +85,7 @@ pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
 
                 // Initialise empty quorum submission tracker
                 env.storage()
-                    .instance()
+                    .persistent()
                     .set(&DataKey::QuorumSubmittedOracles, &Vec::<Address>::new(&env));
 
                 return Ok(());

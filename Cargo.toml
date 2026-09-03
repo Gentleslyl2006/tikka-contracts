@@ -1,9 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-  "contracts/*",
+  "contracts/raffle-factory",
+  "contracts/raffle-instance",
+  "contracts/raffle-shared",
 ]
-default-members = ["contracts/*"]
+default-members = [
+  "contracts/raffle-factory",
+  "contracts/raffle-instance",
+  "contracts/raffle-shared",
+]
 
 [workspace.package]
 rust-version = "1.70"
