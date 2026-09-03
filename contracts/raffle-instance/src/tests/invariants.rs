@@ -181,12 +181,11 @@ fn prize_distribution_invariant_holds_for_multiple_tiers() {
 
             let raffle = client.get_raffle();
             let mut total_claimed = 0i128;
-            for i in 0..raffle.winners.len() {
-                let winner = raffle.winners.get(i).unwrap();
             let mut fee_from_prize = 0i128;
             let winners = raffle.winners;
             for tier_idx in 0..tiers_count {
-                let amt = client.claim_prize(&winners.get(tier_idx as u32).unwrap(), &(tier_idx as u32));
+                let winner = winners.get(tier_idx as u32).unwrap().address;
+                let amt = client.claim_prize(&winner, &(tier_idx as u32));
                 total_claimed += amt;
                 let tier_fee = (amt * fee_bp as i128 + 9999) / 10_000;
                 fee_from_prize += tier_fee;

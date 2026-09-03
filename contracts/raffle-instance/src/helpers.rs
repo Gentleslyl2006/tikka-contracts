@@ -1,4 +1,6 @@
 use soroban_sdk::{auth::InvokerContractAuthEntry, Address, BytesN, Env, IntoVal, Symbol, Val, Vec, token};
+use raffle_shared::constants::{INSTANCE_TTL_BUMP_LEDGERS, INSTANCE_TTL_THRESHOLD_LEDGERS};
+use raffle_shared::BuyQuote;
 
 use crate::events::{RaffleFinalized, RaffleStatusChanged, WinnerDrawn};
 use crate::randomness::{OracleSeedWinnerSelection, WinnerSelectionStrategy};
@@ -13,6 +15,60 @@ pub(crate) fn read_raffle(env: &Env) -> Result<Raffle, Error> {
 
 pub(crate) fn write_raffle(env: &Env, raffle: &Raffle) {
     env.storage().instance().set(&DataKey::Raffle, raffle);
+}
+
+pub(crate) fn calculate_buy_quote(raffle: &Raffle, quantity: u32) -> Result<BuyQuote, Error> {
+    if quantity == 0 {
+        return Err(Error::InvalidQuantity);
+    }
+    let gross = raffle
+        .ticket_price
+        .checked_mul(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let discount = if raffle.early_bird_ticket_percentage > 0
+        && raffle.tickets_sold < raffle.max_tickets * raffle.early_bird_ticket_percentage / 100
+    {
+        gross
+            .checked_mul(raffle.early_bird_discount_bp as i128)
+            .ok_or(Error::ArithmeticOverflow)?
+            / 10_000
+    } else {
+        0
+    };
+    let net = gross.checked_sub(discount).ok_or(Error::ArithmeticOverflow)?;
+    let fee = net
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10_000;
+    let net_to_pay = net.checked_add(fee).ok_or(Error::ArithmeticOverflow)?;
+    let effective_ticket_price = net / quantity as i128;
+    Ok(BuyQuote { gross, discount, fee, net_to_pay, effective_ticket_price })
+}
+
+fn resolve_unique_winner(
+    env: &Env,
+    _seed: u64,
+    _tier_index: u32,
+    total_tickets: u32,
+    winners: &Vec<Address>,
+    candidate: u32,
+) -> u32 {
+    for offset in 0..total_tickets {
+        let index = (candidate + offset) % total_tickets;
+        if let Some(owner) = get_ticket_owner(env, index + 1) {
+            if !winners.iter().any(|winner| winner == owner) {
+                return index;
+            }
+        }
+    }
+    candidate
+}
+
+pub(crate) fn bump_raffle_ttl(env: &Env, _total_tickets: u32) {
+    env.storage().instance().extend_ttl(
+        INSTANCE_TTL_THRESHOLD_LEDGERS,
+        INSTANCE_TTL_BUMP_LEDGERS,
+    );
 }
 
 /// Checked lifecycle transition. All status writes must go through this helper
@@ -290,7 +346,7 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
 ///    [`DataKey::RandomnessSeed`] so it survives ledger-entry expiry and can
 ///    be queried by [`get_fairness_data`](crate::views::get_fairness_data).
 /// 5. Sets `raffle.status = Finalized`, records `winners`,
-///    `claimed_winners`, and `finalized_at`.
+///    winner claim flags, and `finalized_at`.
 /// 6. Clears `RandomnessRequested`, `RandomnessRequestId`,
 ///    `RandomnessRequestLedger`, and sets `DrawingLock = false`.
 /// 7. Emits [`events::RaffleFinalized`].
@@ -335,7 +391,7 @@ pub(crate) fn do_finalize_with_seed(
     }
 
     let selector = OracleSeedWinnerSelection::new(seed);
-    let winning_ticket_ids =
+    let mut winning_ticket_ids =
         selector.select_winner_indices(env, total_tickets, raffle.prizes.len());
     let mut winners = Vec::new(env);
 
@@ -356,11 +412,6 @@ pub(crate) fn do_finalize_with_seed(
         .publish(env);
     }
 
-    let mut claimed_winners = Vec::new(env);
-    for _ in 0..raffle.prizes.len() {
-        claimed_winners.push_back(false);
-    }
-
     env.storage().persistent().set(
         &DataKey::RandomnessSeed,
         &FairnessMetadata {
@@ -373,8 +424,14 @@ pub(crate) fn do_finalize_with_seed(
         },
     );
 
-    raffle.winners = winners.clone();
-    raffle.claimed_winners = claimed_winners;
+    let mut winner_records = Vec::new(env);
+    for winner in winners.iter() {
+        winner_records.push_back(crate::Winner {
+            address: winner,
+            claimed: false,
+        });
+    }
+    raffle.winners = winner_records;
     raffle.finalized_at = Some(env.ledger().timestamp());
     transition_status(
         env,
@@ -406,6 +463,7 @@ pub(crate) fn do_finalize_with_seed(
         randomness_source: raffle.randomness_source.clone(),
         randomness_type,
         finalized_at: env.ledger().timestamp(),
+        unique_winners: raffle.unique_winners,
     }
     .publish(env);
 
