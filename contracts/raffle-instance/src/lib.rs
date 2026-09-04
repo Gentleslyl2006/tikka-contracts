@@ -741,17 +741,13 @@ if config.randomness_source == RandomnessSource::External {
     /// Calling it earlier returns `CancelTimelockActive`; calling it with no
     /// pending schedule returns `CancelNotScheduled`.
     pub fn execute_admin_cancel(env: Env) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::execute_admin_cancel(env)
     }
 
     /// Returns the timestamp at which a scheduled admin cancel becomes
     /// executable, or `None` if no cancel is currently scheduled (#406).
     pub fn get_pending_cancel(env: Env) -> Option<u64> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        None
+        views::get_pending_cancel(env)
     }
 
     pub fn refund_prize(env: Env) -> Result<(), Error> {
@@ -811,9 +807,7 @@ if config.randomness_source == RandomnessSource::External {
     /// O(1) read.  Falls back to an empty Vec when the address has never
     /// purchased a ticket.
     pub fn get_my_tickets(env: Env, owner: Address) -> Vec<u32> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        Vec::new(&env)
+        views::get_my_tickets(env, owner)
     }
 
     pub fn wipe_storage(env: Env) -> Result<(), Error> {
@@ -927,9 +921,7 @@ if config.randomness_source == RandomnessSource::External {
     }
 
     pub fn update_metadata_hash(env: Env, new_hash: BytesN<32>) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::update_metadata_hash(env, new_hash)
     }
 
     /// Permissionless entrypoint — anyone may call this to prevent a raffle

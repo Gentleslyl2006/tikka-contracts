@@ -285,3 +285,64 @@ pub(crate) fn batch_refund_tickets(
 
     Ok(total_refunded)
 }
+
+pub(crate) fn batch_refund_tickets(
+    env: Env,
+    owner: Address,
+    ticket_ids: Vec<u32>,
+) -> Result<i128, Error> {
+    owner.require_auth();
+    let raffle = read_raffle(&env)?;
+    
+    if raffle.status != RaffleStatus::Cancelled && raffle.status != RaffleStatus::Failed {
+        return Err(Error::InvalidStatus);
+    }
+    
+    let _guard = Guard::new(&env)?;
+    let mut total_refunded = 0i128;
+    let token_client = token::Client::new(&env, &raffle.payment_token);
+    
+    for ticket_id in ticket_ids.iter() {
+        let ticket: crate::Ticket = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Ticket(ticket_id))
+            .ok_or(Error::TicketNotFound)?;
+        
+        // Check that the ticket is owned by the caller
+        if ticket.owner != owner {
+            return Err(Error::NotAuthorized);
+        }
+        
+        // Skip if already refunded
+        if env.storage().persistent().has(&DataKey::TicketRefunded(ticket_id)) {
+            continue;
+        }
+        
+        env.storage()
+            .persistent()
+            .set(&DataKey::TicketRefunded(ticket_id), &true);
+        
+        token_client
+            .try_transfer(
+                &env.current_contract_address(),
+                &ticket.owner,
+                &raffle.ticket_price,
+            )
+            .map_err(|_| Error::TokenTransferFailed)?;
+        
+        TicketRefunded {
+            buyer: ticket.owner.clone(),
+            ticket_number: ticket.ticket_number,
+            amount: raffle.ticket_price,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+        
+        total_refunded = total_refunded
+            .checked_add(raffle.ticket_price)
+            .ok_or(Error::ArithmeticOverflow)?;
+    }
+    
+    Ok(total_refunded)
+}

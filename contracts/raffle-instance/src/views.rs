@@ -224,3 +224,27 @@ pub(crate) fn preview_buy(env: Env, quantity: u32) -> Result<BuyQuote, Error> {
     let raffle = read_raffle(&env)?;
     calculate_buy_quote(&raffle, quantity)
 }
+
+/// Returns the timestamp at which a scheduled admin cancel becomes
+/// executable, or `None` if no cancel is currently scheduled (#406).
+///
+/// When an admin calls `cancel_raffle`, a cancellation is scheduled with a
+/// timelock delay.  This function allows clients to check if a cancel is
+/// pending and when it will become available.
+///
+/// Returns `None` if no admin cancel has been scheduled.
+pub(crate) fn get_pending_cancel(env: Env) -> Option<u64> {
+    env.storage().instance().get(&DataKey::PendingAdminCancel)
+}
+
+/// Return all ticket IDs owned by `owner`.
+///
+/// Uses the `OwnerTickets` index maintained during `buy_tickets` for an
+/// O(1) read.  Falls back to an empty Vec when the address has never
+/// purchased a ticket.
+pub(crate) fn get_my_tickets(env: Env, owner: Address) -> Vec<u32> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OwnerTickets(owner))
+        .unwrap_or_else(|| Vec::new(&env))
+}
