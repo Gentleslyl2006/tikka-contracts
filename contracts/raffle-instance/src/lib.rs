@@ -145,14 +145,11 @@ pub enum DataKey {
     CommitEntry(u32),
     DrawingLock,
     TicketBuyers,
-    /// Reserved per-owner ticket ID index: owner Address → Vec<u32> of ticket
-    /// IDs. It is not currently written by ticket purchase logic.
     OwnerTickets(Address),
     PendingAdminCancel,
-    /// Quorum randomness: maps registered oracle address → submitted seed.
     QuorumSeed(Address),
-    /// Quorum randomness: ordered list of oracles that have submitted.
     QuorumSubmittedOracles,
+    MetadataHash,
 }
 
 #[contracttype]
