@@ -138,7 +138,7 @@ that escrowed funds cannot become unreachable.
 
 On success it removes ticket records, refund markers, commit-reveal entries,
 buyer and owner-ticket indexes, quorum randomness entries, and transient
-lifecycle keys. It retains `Raffle`, `Factory`, `Admin`, `MetadataHash`, and
+lifecycle keys. It retains `Raffle`, `Factory`, `Admin`, and
 `RandomnessSeed`; these remain required by read, attestation, fairness, and
 privileged paths. The operation emits `StorageWiped` for indexers.
 
