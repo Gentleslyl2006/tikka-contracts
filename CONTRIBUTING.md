@@ -138,6 +138,25 @@ npx markdownlint-cli2 "**/*.md"
 
 The configuration lives in `.markdownlint.jsonc`. Auto-fixable issues can be resolved with `npx markdownlint-cli2 --fix "**/*.md"`.
 
+## Error Code Policy
+
+Error codes are defined in `#[contracterror]` enums and are part of the on-chain ABI.
+Once a code is assigned it is **never reused or reassigned**, even if the variant is
+later deprecated.  New errors must follow the reserved ranges:
+
+| Range     | Owner            | Purpose                                      |
+| --------- | ---------------- | -------------------------------------------- |
+| 1 – 99    | Shared           | Conditions used by both instance and factory  |
+| 100 – 199 | Instance-only    | New instance-specific errors                 |
+| 200 – 299 | Factory-only     | New factory-specific errors                  |
+
+If a new shared condition is needed, add it to `ProtocolError` in
+`contracts/raffle-shared/src/errors.rs` with a code in the 1–99 range, then update
+both `raffle-instance/src/lib.rs` and `raffle-factory/src/lib.rs` to use it.
+
+Run `python scripts/check_error_codes.py` before submitting a PR to verify no
+duplicate discriminants exist.
+
 ## Pull Requests
 
 - Provide a concise summary of what changed and why.

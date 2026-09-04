@@ -43,4 +43,7 @@ oracle-build:
 oracle-test:
 	cd oracle && npm test
 
+oracle-lint:
+	cd oracle && npm run lint
+
 all: lint test build

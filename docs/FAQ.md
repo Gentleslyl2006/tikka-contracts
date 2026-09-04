@@ -216,6 +216,14 @@ Re-commit before pushing.
 
 ---
 
+## 11. Who gets the refund for a gifted ticket?
+
+**Policy:** If a raffle is cancelled or fails, the refund for any tickets goes to the **payer** (the one who bought the ticket), not the ticket owner/recipient.
+
+**Why?** The gifter paid the funds, so on cancellation, the funds are returned to the source. The recipient did not pay, so they do not receive a refund. Either party (payer or owner) can initiate the refund, but the contract always directs the funds to the original payer.
+
+---
+
 ## Still stuck?
 
 1. Read [DEVELOPMENT.md](DEVELOPMENT.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
