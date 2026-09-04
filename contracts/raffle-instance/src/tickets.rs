@@ -123,6 +123,10 @@ use crate::helpers::bump_raffle_ttl;
 /// See also: [`docs/EVENTS.md`](../../../../docs/EVENTS.md) —
 /// `TicketPurchased`, `DrawTriggered`, `RandomnessRequested`.
 pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32, Error> {
+    //  1. Take reentrancy guard FIRST
+    let _guard = Guard::new(&env)?;
+
+    //  2. Validate inputs
     let drawing_lock: bool = env
         .storage()
         .instance()
@@ -194,6 +198,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         .ok_or(Error::ArithmeticOverflow)?
         / 10000;
 
+    //  3. Verify no concurrent modification
     let persisted = crate::read_raffle(&env)?;
     let persisted_sold = persisted.tickets_sold;
     let persisted_count: u32 = env
@@ -212,6 +217,29 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         return Err(Error::TicketsSoldOut);
     }
 
+    //  4. PAYMENT FIRST! (before any state mutation)
+    let token_client = token::Client::new(&env, &raffle.payment_token);
+    let contract_address = env.current_contract_address();
+    token_client
+        .try_transfer(&buyer, &contract_address, &total_price)
+        .map_err(|_| Error::TokenTransferFailed)?;
+
+    //  5. Transfer protocol fee to treasury
+    if protocol_fee > 0 {
+        if let Some(treasury) = &raffle.treasury_address {
+            token_client.transfer(&contract_address, treasury, &protocol_fee);
+        }
+        let prev: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AccumulatedFees)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccumulatedFees, &(prev + protocol_fee));
+    }
+
+    //  6. NOW mutate state (write tickets)
     if current_count == 0 {
         let mut buyers: Vec<Address> = env
             .storage()
@@ -252,6 +280,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         .checked_add(quantity)
         .ok_or(Error::ArithmeticOverflow)?;
 
+    //  7. transition_to_drawing and request_randomness (if needed)
     if raffle.tickets_sold >= raffle.max_tickets {
         transition_to_drawing(&env, &mut raffle, timestamp)?;
         if raffle.randomness_source == RandomnessSource::External {
@@ -276,6 +305,20 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
 
     crate::write_raffle(&env, &raffle);
 
+    //  8. Emit event (after state is final)
+    TicketPurchased {
+        buyer: buyer.clone(),
+        ticket_ids,
+        quantity,
+        ticket_price: raffle.ticket_price,
+        effective_ticket_price: raffle.ticket_price,
+        total_paid: total_price,
+        protocol_fee,
+        timestamp,
+    }
+    .publish(&env);
+
+    //  9. Factory notifications LAST (external calls)
     if let Some(factory_address) = env
         .storage()
         .instance()
@@ -297,9 +340,12 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         env.invoke_contract::<()>(
             &factory_address,
             &Symbol::new(&env, "track_participant"),
-            (buyer.clone(),).into_val(&env),
+            (buyer,).into_val(&env),
         );
     }
+
+        fix/security-checks-effects-763
+    //  10. Bump TTLs
 
     let token_client = token::Client::new(&env, &raffle.payment_token);
     let _ = token_client
@@ -333,6 +379,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     .publish(&env);
 
     // Opportunistically bump TTLs so a long-running raffle doesn't get archived.
+        master
     bump_raffle_ttl(&env, raffle.tickets_sold);
 
     Ok(raffle.tickets_sold)
@@ -378,6 +425,10 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
 ///
 /// See [`buy_tickets`] for the full error list and event documentation.
 pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quantity: u32) -> Result<u32, Error> {
+    //  1. Take reentrancy guard FIRST
+    let _guard = Guard::new(&env)?;
+
+    //  2. Validate inputs
     let drawing_lock: bool = env.storage().instance().get(&crate::DataKey::DrawingLock).unwrap_or(false);
     if drawing_lock {
         return Err(Error::DrawingAlreadyInProgress);
@@ -391,6 +442,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
     buyer.require_auth();
     require_not_paused(&env)?;
+    crate::require_global_not_paused(&env)?;
 
     if raffle.status != RaffleStatus::Active {
         return Err(Error::RaffleInactive);
@@ -406,9 +458,17 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let snapshot_sold = raffle.tickets_sold;
-    let current_count: u32 = env.storage().persistent().get(&DataKey::TicketCount(recipient.clone())).unwrap_or(0);
+    let current_count: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TicketCount(recipient.clone()))
+        .unwrap_or(0);
 
-    if snapshot_sold + quantity > raffle.max_tickets {
+    if snapshot_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?
+        > raffle.max_tickets
+    {
         return Err(Error::TicketsSoldOut);
     }
     if raffle.max_tickets_per_address == 0
@@ -427,81 +487,129 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
-    let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
+        fix/security-checks-effects-763
+    let total_price = raffle
+        .ticket_price
+        .checked_mul(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+    let protocol_fee = total_price
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10000;
 
+    let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
+        master
+
+    //  3. Verify no concurrent modification
     let persisted = crate::read_raffle(&env)?;
     let persisted_sold = persisted.tickets_sold;
-    let persisted_count: u32 = env.storage().persistent().get(&DataKey::TicketCount(recipient.clone())).unwrap_or(0);
+    let persisted_count: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TicketCount(recipient.clone()))
+        .unwrap_or(0);
     if persisted_sold != snapshot_sold || persisted_count != current_count {
         return Err(Error::InvalidStateTransition);
     }
-    if persisted_sold + quantity > persisted.max_tickets {
+    if persisted_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?
+        > persisted.max_tickets
+    {
         return Err(Error::TicketsSoldOut);
     }
 
+    //  4. PAYMENT FIRST! (before any state mutation)
+    let token_client = token::Client::new(&env, &raffle.payment_token);
+    let contract_address = env.current_contract_address();
+    token_client
+        .try_transfer(&buyer, &contract_address, &total_price)
+        .map_err(|_| Error::TokenTransferFailed)?;
+
+    //  5. Transfer protocol fee to treasury
+    if protocol_fee > 0 {
+        if let Some(treasury) = &raffle.treasury_address {
+            token_client.transfer(&contract_address, treasury, &protocol_fee);
+        }
+        let prev: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AccumulatedFees)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccumulatedFees, &(prev + protocol_fee));
+    }
+
+    //  6. NOW mutate state (write tickets)
     if current_count == 0 {
-        let mut buyers: Vec<Address> = env.storage().persistent().get(&DataKey::TicketBuyers)
+        let mut buyers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TicketBuyers)
             .unwrap_or_else(|| Vec::new(&env));
         buyers.push_back(recipient.clone());
-        env.storage().persistent().set(&DataKey::TicketBuyers, &buyers);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TicketBuyers, &buyers);
     }
 
     let mut ticket_ids = Vec::new(&env);
     for i in 0..quantity {
-        let ticket_id = snapshot_sold + i + 1;
-        let ticket = Ticket { id: ticket_id, owner: recipient.clone(), purchase_time: timestamp, ticket_number: ticket_id, payer: buyer.clone() };
-        env.storage().persistent().set(&DataKey::Ticket(ticket_id), &ticket);
+        let ticket_id = snapshot_sold
+            .checked_add(i)
+            .and_then(|v| v.checked_add(1))
+            .ok_or(Error::ArithmeticOverflow)?;
+        let ticket = Ticket {
+            id: ticket_id,
+            owner: recipient.clone(),
+            purchase_time: timestamp,
+            ticket_number: ticket_id,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Ticket(ticket_id), &ticket);
         ticket_ids.push_back(ticket_id);
     }
 
-    env.storage().persistent().set(&DataKey::TicketCount(recipient.clone()), &(current_count + quantity));
-    raffle.tickets_sold = snapshot_sold + quantity;
+    env.storage().persistent().set(
+        &DataKey::TicketCount(recipient.clone()),
+        &current_count
+            .checked_add(quantity)
+            .ok_or(Error::ArithmeticOverflow)?,
+    );
+    raffle.tickets_sold = snapshot_sold
+        .checked_add(quantity)
+        .ok_or(Error::ArithmeticOverflow)?;
 
+    //  7. transition_to_drawing and request_randomness (if needed)
     if raffle.tickets_sold >= raffle.max_tickets {
         transition_to_drawing(&env, &mut raffle, timestamp)?;
         if raffle.randomness_source == RandomnessSource::External {
             let request_id = request_randomness(&env)?;
-            DrawTriggered { caller: buyer.clone(), total_tickets_sold: raffle.tickets_sold, timestamp }.publish(&env);
+            DrawTriggered {
+                caller: recipient.clone(),
+                total_tickets_sold: raffle.tickets_sold,
+                timestamp,
+            }
+            .publish(&env);
             RandomnessRequested {
-                oracle: raffle.oracle_address.clone().unwrap_or(env.current_contract_address()),
-                request_id, timestamp,
-            }.publish(&env);
+                oracle: raffle
+                    .oracle_address
+                    .clone()
+                    .unwrap_or(env.current_contract_address()),
+                request_id,
+                timestamp,
+            }
+            .publish(&env);
         }
     }
 
     crate::write_raffle(&env, &raffle);
 
-    if let Some(factory_address) = env.storage().instance().get::<_, Address>(&DataKey::Factory) {
-        let args: Vec<Val> = (raffle.payment_token.clone(), total_price).into_val(&env);
-        env.authorize_as_current_contract(Vec::from_array(&env, [
-            InvokerContractAuthEntry::Contract(SubContractInvocation {
-                context: ContractContext {
-                    contract: factory_address.clone(),
-                    fn_name: Symbol::new(&env, "record_volume"),
-                    args: args.clone(),
-                },
-                sub_invocations: Vec::new(&env),
-            }),
-        ]));
-        env.invoke_contract::<()>(&factory_address, &Symbol::new(&env, "record_volume"), args);
-        env.invoke_contract::<()>(&factory_address, &Symbol::new(&env, "track_participant"), (recipient.clone(),).into_val(&env));
-    }
-
-    let token_client = token::Client::new(&env, &raffle.payment_token);
-    let _ = token_client.try_transfer(&buyer, env.current_contract_address(), &total_price)
-        .map_err(|_| Error::TokenTransferFailed)?;
-
-    if protocol_fee > 0 {
-        if let Some(treasury) = &raffle.treasury_address {
-            token_client.transfer(&env.current_contract_address(), treasury, &protocol_fee);
-        }
-        let prev: i128 = env.storage().instance().get(&DataKey::AccumulatedFees).unwrap_or(0);
-        env.storage().instance().set(&DataKey::AccumulatedFees, &(prev + protocol_fee));
-    }
-
-    crate::events::TicketGifted {
-        buyer,
-        recipient,
+    //  8. Emit event (after state is final)
+    TicketPurchased {
+        buyer: recipient.clone(),
         ticket_ids,
         quantity,
         ticket_price: raffle.ticket_price,
@@ -511,9 +619,38 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
         timestamp,
     }
     .publish(&env);
+
+    //  9. Factory notifications LAST (external calls)
+    if let Some(factory_address) = env
+        .storage()
+        .instance()
+        .get::<_, Address>(&DataKey::Factory)
+    {
+        let args: Vec<Val> = (raffle.payment_token.clone(), total_price).into_val(&env);
+        env.authorize_as_current_contract(Vec::from_array(
+            &env,
+            [InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: factory_address.clone(),
+                    fn_name: Symbol::new(&env, "record_volume"),
+                    args: args.clone(),
+                },
+                sub_invocations: Vec::new(&env),
+            })],
+        ));
+        env.invoke_contract::<()>(&factory_address, &Symbol::new(&env, "record_volume"), args);
+        env.invoke_contract::<()>(
+            &factory_address,
+            &Symbol::new(&env, "track_participant"),
+            (recipient,).into_val(&env),
+        );
+    }
+
+    //  10. Bump TTLs
+    bump_raffle_ttl(&env, raffle.tickets_sold);
+
     Ok(raffle.tickets_sold)
 }
-
 /// Submit a hash commitment for the [`RandomnessSource::CommitReveal`] path.
 ///
 /// In the commit-reveal scheme each ticket holder contributes entropy to the

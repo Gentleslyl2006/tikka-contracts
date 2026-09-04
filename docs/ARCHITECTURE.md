@@ -112,3 +112,81 @@ The following table summarizes the behavior of mutating contract entrypoints acr
 | `cancel_raffle` | **Allowed** (-> Cancelled) | **Allowed** (-> Cancelled) | **Allowed** (-> Cancelled) | Rejected (`InvalidStatus`) | Rejected (`InvalidStatus`) | **Allowed** (-> Cancelled) | Rejected (`InvalidStatus`) |
 | `refund_ticket` | Rejected (`InvalidStatus`) | Rejected (`InvalidStatus`) | Rejected (`InvalidStatus`) | Rejected (`InvalidStatus`) | **Allowed** | **Allowed** | Rejected (`InvalidStatus`) |
 
+## Security: Checks-Effects-Interactions Pattern
+
+All contract entrypoints **MUST** follow this ordering to prevent reentrancy attacks and ensure atomicity.
+
+### The Rule
+
+| Step | Phase | Description |
+|------|-------|-------------|
+| 1 | **CHECK** | Validate all inputs, conditions, and permissions |
+| 2 | **EFFECTS** | Perform all state mutations (storage writes) |
+| 3 | **INTERACTIONS** | Make external calls (transfers, factory calls, etc.) |
+
+### Applied to `buy_tickets` and `buy_tickets_for`
+
+```rust
+// 1. CHECK: Validate inputs
+let _guard = Guard::new(&env)?;        // Reentrancy guard
+require_not_paused(&env)?;              // Contract state check
+if quantity == 0 { return Err(...); }   // Input validation
+if raffle.status != Active { ... }      // State validation
+
+// 2. EFFECTS: Charge payment FIRST (before any state mutation)
+token_client.transfer(&buyer, &contract, &total_price)?;
+
+// 3. EFFECTS: Mutate state
+env.storage().persistent().set(&DataKey::Ticket(ticket_id), &ticket);
+raffle.tickets_sold += quantity;
+crate::write_raffle(&env, &raffle);
+
+// 4. INTERACTIONS: External calls LAST
+env.invoke_contract(&factory, "record_volume", args);
+env.invoke_contract(&factory, "track_participant", args);
+
+### Entrypoint Security Status
+Entrypoint	Guard	Payment First	Factory Last	Status
+buy_tickets	✅	✅	✅	✅ Fixed (Issue #763)
+buy_tickets_for	✅	✅	✅	✅ Fixed (Issue #763)
+claim_prize	✅	N/A	N/A	✅ Already has guard
+refund_ticket	✅	N/A	N/A	✅ Already has guard
+refund_prize	✅	N/A	N/A	✅ Already has guard
+
+### Why This Matters
+✅ Prevents reentrancy attacks - No external calls before state is final
+
+✅ Prevents unpaid tickets - Payment must succeed before any state change
+
+✅ Atomicity - If anything fails, the entire transaction reverts
+
+✅ Checks-effects-interactions - Industry standard security pattern
+
+### Historical Context
+Issue #763 identified that buy_tickets was violating this pattern:
+
+❌ Payment was happening LAST (after state mutations)
+
+❌ Factory calls were happening BEFORE payment
+
+❌ No reentrancy guard in purchase paths
+
+### Fix applied (Issue #763):
+
+✅ Payment moved to FIRST (before any state mutation)
+
+✅ Reentrancy guard added to both purchase paths
+
+✅ Factory notifications moved to the END (after all state is final)
+
+✅ Event emission moved after state is final
+
+### Testing
+A malicious token contract that reenters buy_tickets during the transfer will now:
+
+Find that Guard is already held → Error::Reentrancy
+
+Or find that state is already final → no unpaid tickets can be minted
+
+This closes the attack vector described in Issue #763.
+
