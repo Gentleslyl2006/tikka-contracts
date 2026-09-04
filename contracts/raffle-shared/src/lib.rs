@@ -509,6 +509,7 @@ macro_rules! impl_require_not_paused {
     };
 }
 
+/// Unit tests for RaffleConfig defaults and resolution (#734).
 #[cfg(test)]
 mod test {
     use super::*;
