@@ -81,6 +81,19 @@ Administrative escape paths are constrained by the same invariant:
 - `sweep_dust` is available only after settlement and transfers payment-token
     surplus above all remaining entitlements; accumulated fees are preserved.
 
+Escrow solvency is a protocol guarantee. After every successful state-changing
+entrypoint, configured-token balances must cover all stored entitlements:
+
+```text
+balance(prize_token)   >= unclaimed_prize_total
+balance(payment_token) >= unrefunded_ticket_total + accumulated_fees_owed
+```
+
+When `payment_token == prize_token`, these are enforced as one combined
+inequality over the shared token balance. `unclaimed_prize_total`,
+`unrefunded_ticket_total`, and `accumulated_fees_owed` are derived from
+contract storage, not off-chain indexer state or test bookkeeping.
+
 No token-moving path may reduce a token balance below its outstanding
 entitlement. `emergency_withdraw` cannot operate on `Finalized`, because
 unclaimed winners remain entitled to their prizes.

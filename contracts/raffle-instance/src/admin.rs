@@ -74,7 +74,10 @@ pub(crate) fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
     if !new_admin.exists() || new_admin == env.current_contract_address() {
         return Err(Error::InvalidAdminAddress);
     }
-    env.storage().persistent().set(&DataKey::Admin, &new_admin);
+    // `init` and `require_admin` read/write DataKey::Admin from instance storage;
+    // keep the rotated admin on the same tier or every admin entrypoint bricks
+    // after a rotation (#751).
+    env.storage().instance().set(&DataKey::Admin, &new_admin);
     Ok(())
 }
 

@@ -176,7 +176,11 @@ pub struct RecurringRaffleConfig {
 pub struct RaffleConfig {
     /// Human-readable raffle description.
     pub description: String,
-    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is true).
+    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is
+    /// true). Exclusive boundary: sales are open while
+    /// `ledger_timestamp < end_time`; the deadline is reached starting at
+    /// `ledger_timestamp == end_time`. Validated at `init` to be strictly in
+    /// the future. See `docs/GLOSSARY.md` § "End Time".
     pub end_time: u64,
     /// If true, raffle can remain open without a hard end timestamp.
     pub no_deadline: bool,
@@ -302,6 +306,18 @@ impl Ticket {
             payer: owner,
         }
     }
+}
+
+/// A single drawn winner and their claim state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct Winner {
+    /// Address that owns the winning ticket at draw time.
+    pub address: Address,
+    /// True once this tier's prize has been paid out or swept.
+    pub claimed: bool,
+    /// Index into `Raffle::prizes` identifying the tier won.
+    pub tier_index: u32,
 }
 
 /// Audit data proving how a draw outcome was derived.

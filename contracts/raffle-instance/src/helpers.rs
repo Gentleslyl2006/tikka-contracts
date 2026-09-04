@@ -183,6 +183,27 @@ pub(crate) fn require_not_paused(env: &Env) -> Result<(), Error> {
     Ok(())
 }
 
+/// Blocks ticket purchases (and other guarded ops) while the protocol-wide
+/// **global pause** is engaged.
+///
+/// This intentionally consults the factory's `is_global_paused` flag — the one
+/// toggled by `emergency_pause_all` / `emergency_unpause_all`. That is the
+/// single switch that halts every deployed instance at once, which is why an
+/// `emergency_pause_all` call stops ticket purchases here even though this
+/// contract was already deployed.
+///
+/// It does **not** consult the factory's `DataKey::Paused` (`pause_factory`)
+/// or `DataKey::CreationPaused` (`set_creation_paused`) flags: `pause_factory`
+/// only stops new activity at the factory level and `set_creation_paused` only
+/// blocks `create_raffle`. Neither reaches existing instances by design.
+///
+/// Precedence (highest to lowest, factory-side):
+///   1. global pause  (`emergency_pause_all`)   → blocks everything, all instances
+///   2. factory pause  (`pause_factory`)         → blocks factory-level ops only
+///   3. creation pause (`set_creation_paused`)   → blocks `create_raffle` only
+///
+/// See `contracts/raffle-factory/src/pause.rs` for the authoritative table and
+/// `docs/ARCHITECTURE.md` / `oracle/RUNBOOK.md` for the incident-response call.
 pub(crate) fn require_global_not_paused(env: &Env) -> Result<(), Error> {
     let factory: Address = env
         .storage()
@@ -224,6 +245,12 @@ pub(crate) fn build_internal_seed_u64(env: &Env) -> u64 {
 }
 
 pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i128, Error> {
+    if raffle.prizes.is_empty() {
+        return Err(Error::InvalidParameters);
+    }
+    if tier_index >= raffle.prizes.len() {
+        return Err(Error::InvalidIndex);
+    }
     let last_tier_index = raffle.prizes.len() - 1;
     if tier_index == last_tier_index {
         let mut allocated = 0i128;
@@ -233,15 +260,23 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
                 .prize_amount
                 .checked_mul(bp as i128)
                 .ok_or(Error::ArithmeticOverflow)?
-                / 10000;
+                .checked_add(allocated)
+                .ok_or(Error::ArithmeticOverflow)?;
             allocated = allocated
                 .checked_add(amt)
                 .ok_or(Error::ArithmeticOverflow)?;
         }
-        return raffle
+        raffle
             .prize_amount
             .checked_sub(allocated)
-            .ok_or(Error::ArithmeticOverflow);
+            .ok_or(Error::ArithmeticOverflow)
+    } else {
+        let bp = raffle.prizes.get(tier_index).ok_or(Error::InvalidIndex)?;
+        raffle
+            .prize_amount
+            .checked_mul(bp as i128)
+            .ok_or(Error::ArithmeticOverflow)
+            .map(|a| a / 10000)
     }
     let bp = raffle.prizes.get(tier_index).ok_or(Error::InvalidIndex)?;
     raffle
@@ -327,8 +362,12 @@ pub(crate) fn do_finalize_with_seed(
             idx = resolve_unique_winner(env, seed, i as u32, total_tickets, &winners, idx);
             winning_ticket_ids.set(i, idx);
         }
-        let winner = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
-        winners.push_back(winner.clone());
+        let owner = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
+        winners.push_back(crate::Winner {
+            address: owner.clone(),
+            claimed: false,
+            prize_index: i as u32,
+        });
         WinnerDrawn {
             winner,
             ticket_id: idx + 1,
@@ -342,17 +381,6 @@ pub(crate) fn do_finalize_with_seed(
     for _ in 0..raffle.prizes.len() {
         claimed_winners.push_back(false);
     }
-
-    env.storage().persistent().set(
-        &DataKey::RandomnessSeed,
-        &FairnessMetadata {
-            seed,
-            randomness_source: raffle.randomness_source.clone(),
-            winning_ticket_indices: winning_ticket_ids.clone(),
-            draw_timestamp: env.ledger().timestamp(),
-            draw_sequence: env.ledger().sequence(),
-        },
-    );
 
     env.storage().persistent().set(
         &DataKey::RandomnessSeed,
@@ -377,6 +405,7 @@ pub(crate) fn do_finalize_with_seed(
     )?;
     raffle.finalized_at = Some(env.ledger().timestamp());
     write_raffle(env, &raffle);
+    record_leaderboard(env, &raffle);
 
     env.storage()
         .instance()
@@ -390,9 +419,14 @@ pub(crate) fn do_finalize_with_seed(
     clear_quorum_storage(env);
     env.storage().instance().set(&DataKey::DrawingLock, &false);
 
+    let mut winner_addresses = Vec::new(env);
+    for w in winners.iter() {
+        winner_addresses.push_back(w.address);
+    }
+
     RaffleFinalized {
         raffle_id: env.current_contract_address(),
-        winners,
+        winners: winner_addresses,
         winning_ticket_ids,
         total_tickets_sold: raffle.tickets_sold,
         randomness_source: raffle.randomness_source.clone(),
@@ -573,4 +607,106 @@ pub(crate) fn clear_quorum_storage(env: &Env) {
             .remove(&DataKey::QuorumSubmittedOracles);
     }
         master
+}
+
+#[cfg(any(test, feature = "testutils"))]
+fn checked_add(lhs: i128, rhs: i128, label: &str) -> i128 {
+    lhs.checked_add(rhs)
+        .unwrap_or_else(|| panic!("solvency invariant overflow while adding {label}"))
+}
+
+#[cfg(any(test, feature = "testutils"))]
+fn ticket_payment_amount(raffle: &Raffle, ticket_id: u32) -> i128 {
+    let discounted_tickets =
+        (raffle.max_tickets as u64 * raffle.early_bird_ticket_percentage as u64 / 100) as u32;
+    if ticket_id > discounted_tickets || raffle.early_bird_discount_bp == 0 {
+        return raffle.ticket_price;
+    }
+
+    let discount = raffle
+        .ticket_price
+        .checked_mul(raffle.early_bird_discount_bp as i128)
+        .and_then(|value| value.checked_div(10_000))
+        .expect("solvency invariant overflow while calculating early-bird discount");
+    raffle
+        .ticket_price
+        .checked_sub(discount)
+        .expect("solvency invariant underflow while calculating early-bird ticket payment")
+}
+
+#[cfg(any(test, feature = "testutils"))]
+fn unrefunded_ticket_total(env: &Env, raffle: &Raffle) -> i128 {
+    if matches!(raffle.status, RaffleStatus::Finalized | RaffleStatus::Claimed) {
+        return 0;
+    }
+
+    let mut total = 0i128;
+    for ticket_id in 1..=raffle.tickets_sold {
+        if !env.storage().persistent().has(&DataKey::TicketRefunded(ticket_id)) {
+            total = checked_add(total, ticket_payment_amount(raffle, ticket_id), "ticket refunds");
+        }
+    }
+    total
+}
+
+#[cfg(any(test, feature = "testutils"))]
+fn unclaimed_prize_total(raffle: &Raffle) -> i128 {
+    if !raffle.prize_deposited {
+        return 0;
+    }
+    if raffle.status != RaffleStatus::Finalized {
+        return raffle.prize_amount;
+    }
+
+    let mut total = 0i128;
+    for tier_index in 0..raffle.winners.len() {
+        if !raffle.claimed_winners.get(tier_index).unwrap_or(false) {
+            let amount = calculate_tier_prize(raffle, tier_index)
+                .expect("solvency invariant failed to calculate tier prize");
+            total = checked_add(total, amount, "unclaimed prizes");
+        }
+    }
+    total
+}
+
+/// Assert that configured-token balances cover all stored raffle entitlements.
+///
+/// This is test/fuzz-only. It derives every obligation from contract storage:
+/// deposited/unclaimed prizes, unrefunded tickets, and recorded accumulated
+/// fees. When `payment_token == prize_token`, both sides are folded into one
+/// combined inequality over the single token balance.
+#[cfg(any(test, feature = "testutils"))]
+pub fn assert_solvent(env: &Env) {
+    let raffle = read_raffle(env).expect("solvency invariant requires initialized raffle");
+    let prize_owed = unclaimed_prize_total(&raffle);
+    let payment_owed = checked_add(
+        unrefunded_ticket_total(env, &raffle),
+        env.storage()
+            .instance()
+            .get::<_, i128>(&DataKey::AccumulatedFees)
+            .unwrap_or(0),
+        "payment-token entitlements",
+    );
+
+    let payment_balance =
+        token::Client::new(env, &raffle.payment_token).balance(&env.current_contract_address());
+    if raffle.payment_token == raffle.prize_token {
+        let combined_owed = checked_add(payment_owed, prize_owed, "combined entitlements");
+        assert!(
+            payment_balance >= combined_owed,
+            "escrow insolvent for combined token: balance {payment_balance}, owed {combined_owed}"
+        );
+        return;
+    }
+
+    let prize_balance =
+        token::Client::new(env, &raffle.prize_token).balance(&env.current_contract_address());
+    assert!(
+        prize_balance >= prize_owed,
+        "escrow insolvent for prize token: balance {prize_balance}, owed {prize_owed}"
+    );
+    assert!(
+        payment_balance >= payment_owed,
+        "escrow insolvent for payment token: balance {payment_balance}, owed {payment_owed}"
+    );
 }

@@ -92,7 +92,7 @@ pub(crate) fn get_fairness_data(env: Env) -> Result<FairnessData, Error> {
 /// | `fees_accrued` | `AccumulatedFees` instance storage |
 /// | `prize_funded` | [`Raffle::prize_deposited`](crate::Raffle) |
 /// | `status` | [`Raffle::status`](crate::Raffle) |
-/// | `time_remaining` | `end_time - ledger_timestamp` (0 if past deadline or `no_deadline`) |
+/// | `time_remaining` | `end_time - ledger_timestamp` while `ledger_timestamp < end_time`; `0` at or after `end_time`, or whenever `no_deadline` is `true` (see `docs/GLOSSARY.md` § "End Time") |
 ///
 /// # Errors
 ///

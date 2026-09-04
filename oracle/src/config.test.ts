@@ -1,10 +1,19 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { loadAndValidateConfig } from './config';
 
+jest.mock('./logging/logger', () => ({
+  logger: {
+    error: jest.fn(),
+  },
+}));
+
+const { logger } = jest.requireMock('./logging/logger') as {
+  logger: { error: jest.Mock };
+};
+
 describe('loadAndValidateConfig', () => {
   const originalEnv = process.env;
   let exitSpy: jest.SpyInstance;
-  let errorSpy: jest.SpyInstance;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
@@ -24,13 +33,12 @@ describe('loadAndValidateConfig', () => {
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`process.exit:${code ?? 0}`);
     }) as never);
-    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.clearAllMocks();
   });
 
   afterEach(() => {
     process.env = originalEnv;
     exitSpy.mockRestore();
-    errorSpy.mockRestore();
   });
 
   it('exits with code 1 when required env vars are missing', () => {
@@ -83,7 +91,7 @@ describe('loadAndValidateConfig', () => {
 
     const config = loadAndValidateConfig();
 
-    expect(config.alertWebhookUrl).toBe('https://hooks.example.com/alert');
+    expect(config.alertWebhookUrl).toBe(process.env.ALERT_WEBHOOK_URL);
     expect(config.alertFailureThreshold).toBe(5);
     expect(config.alertRateLimitMs).toBe(30_000);
     expect(config.alertQueueDepthLimit).toBe(20);
@@ -98,6 +106,6 @@ describe('loadAndValidateConfig', () => {
     process.env['ALERT_RATE_LIMIT_MS'] = 'not-a-number';
 
     expect(() => loadAndValidateConfig()).toThrow('process.exit:1');
-    expect(errorSpy).toHaveBeenCalledWith(' - ALERT_RATE_LIMIT_MS must be a positive number');
+    expect(logger.error).toHaveBeenCalledWith(' - ALERT_RATE_LIMIT_MS must be a positive number');
   });
 });

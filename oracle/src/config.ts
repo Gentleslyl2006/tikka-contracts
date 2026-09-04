@@ -1,5 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import { decodeSecretKey } from './keys/secret-key';
+import { logger } from './logging/logger';
 
 export interface OracleConfig {
   rpcUrl: string;
@@ -77,9 +78,9 @@ export function loadAndValidateConfig(): OracleConfig {
   const alertRpcUnreachableThreshold = readPositiveInt('ALERT_RPC_UNREACHABLE_THRESHOLD', 3, errors);
 
   if (errors.length > 0) {
-    console.error('Configuration errors:');
+    logger.error('Configuration errors:');
     for (const error of errors) {
-      console.error(` - ${error}`);
+      logger.error(` - ${error}`);
     }
     process.exit(1);
   }

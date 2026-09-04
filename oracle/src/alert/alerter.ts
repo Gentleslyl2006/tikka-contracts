@@ -1,5 +1,7 @@
 export type AlertSeverity = 'info' | 'warning' | 'critical';
 
+import { logger } from './logger';
+
 export interface AlertPayload {
   type: string;
   severity: AlertSeverity;
@@ -81,10 +83,10 @@ export class Alerter {
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
-        console.error(`Alert delivery failed: HTTP ${response.status}`);
+        logger.error(`Alert delivery failed: HTTP ${response.status}`);
       }
     } catch (error) {
-      console.error(
+      logger.error(
         `Alert delivery failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }

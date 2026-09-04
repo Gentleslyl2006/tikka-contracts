@@ -99,7 +99,8 @@ export class OraclePipeline {
   }
 
   async start(contractIds: string[]): Promise<void> {
-    console.log(`Starting oracle service for contracts: ${contractIds.join(', ')}`);
+    const pipelineLogger = childLogger({ raffleId: contractIds.join(',') });
+    pipelineLogger.info(`Starting oracle service for contracts: ${contractIds.join(', ')}`);
 
     // Initialize KeyService
     await this.keyService.initialize();
@@ -136,15 +137,16 @@ export class OraclePipeline {
     // Start listening for events in the background
     void this.eventListener.startListening(contractIds);
 
-    console.log('Oracle service started successfully');
+    pipelineLogger.info('Oracle service started successfully');
   }
 
   private async processJob(job: { requestId: bigint; raffleContract: string; timestamp: bigint }): Promise<boolean> {
     const { requestId, raffleContract } = job;
+    const jobLogger = childLogger({ requestId: requestId.toString(), raffleId: raffleContract });
 
     // Check for duplicates
     if (this.dedupStore.isDuplicate(requestId, raffleContract)) {
-      console.log(`Skipping duplicate request: raffle=${raffleContract} requestId=${requestId}`);
+      jobLogger.info(`Skipping duplicate request: raffle=${raffleContract} requestId=${requestId}`);
       return false;
     }
 
@@ -191,7 +193,7 @@ export class OraclePipeline {
 
       return true;
     } catch (error) {
-      console.error(`Failed to process job raffle=${raffleContract} requestId=${requestId}:`, error);
+      jobLogger.error(`Failed to process job raffle=${raffleContract} requestId=${requestId}:`, error);
       throw error;
     }
   }
@@ -208,7 +210,7 @@ export class OraclePipeline {
         try {
           await this.processJob(job);
         } catch (error) {
-          console.error('Error processing job:', error);
+          queueLogger.error('Error processing job:', error);
           // Job will be retried on next restart if not marked as duplicate
         }
       }
