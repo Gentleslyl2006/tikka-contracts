@@ -140,13 +140,11 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     if quantity == 0 {
         return Err(Error::InvalidQuantity);
     }
-    let mut raffle = crate::read_raffle(&env)?;
     if quantity > raffle.max_tickets_per_tx {
         return Err(Error::ExceedsMaxTicketsPerTx);
     }
-    buyer.require_auth();
-    require_not_paused(&env)?;
-    crate::require_global_not_paused(&env)?;
+    require_not_paused(env)?;
+    crate::require_global_not_paused(env)?;
 
     if raffle.status != RaffleStatus::Active {
         return Err(Error::RaffleInactive);
@@ -160,6 +158,13 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     if !raffle.no_deadline && env.ledger().timestamp() >= raffle.end_time {
         return Err(Error::RaffleExpired);
     }
+    Ok(())
+}
+
+pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32, Error> {
+    buyer.require_auth();
+    let mut raffle = crate::read_raffle(&env)?;
+    validate_purchase_preconditions(&env, &raffle, quantity)?;
 
     let snapshot_sold = raffle.tickets_sold;
     let current_count: u32 = env
