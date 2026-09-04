@@ -613,7 +613,7 @@ if config.randomness_source == RandomnessSource::External {
     /// aggregated via `aggregate_quorum_seeds` and the raffle is finalized.
     pub fn provide_quorum_randomness(
         env: Env,
-        caller: Address,
+        oracle: Address,
         random_seed: u64,
         request_id: u64,
     ) -> Result<(), Error> {
