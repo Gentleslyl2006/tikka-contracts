@@ -1,4 +1,9 @@
-use soroban_sdk::{auth::InvokerContractAuthEntry, Address, BytesN, Env, IntoVal, Symbol, Val, Vec, token};
+use soroban_sdk::{
+    auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+    token,
+    xdr::ToXdr,
+    Address, BytesN, Env, IntoVal, Symbol, Val, Vec,
+};
 
 use crate::events::{RaffleFinalized, RaffleStatusChanged, WinnerDrawn};
 use crate::randomness::OracleSeedWinnerSelection;
@@ -123,7 +128,6 @@ pub(crate) fn request_randomness(env: &Env) -> Result<u64, Error> {
         return Err(Error::RandomnessAlreadyRequested);
     }
 
-    use soroban_sdk::xdr::ToXdr;
     let request_id_xdr = (
         env.ledger().timestamp(),
         env.ledger().sequence(),
@@ -285,7 +289,6 @@ pub(crate) fn calculate_buy_quote(raffle: &Raffle, quantity: u32) -> Result<BuyQ
 }
 
 pub(crate) fn build_internal_seed_u64(env: &Env) -> u64 {
-    use soroban_sdk::xdr::ToXdr;
     let xdr = (
         env.ledger().timestamp(),
         env.ledger().sequence(),
@@ -510,7 +513,6 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
     )
         .into_val(env);
 
-    use soroban_sdk::auth::{ContractContext, SubContractInvocation};
     env.authorize_as_current_contract(soroban_sdk::vec![
         env,
         InvokerContractAuthEntry::Contract(SubContractInvocation {
