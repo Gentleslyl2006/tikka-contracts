@@ -229,6 +229,61 @@ pub(crate) fn validate_token_address(env: &Env, token_address: &Address) -> Resu
     Ok(())
 }
 
+/// Compute the full pricing breakdown for buying `quantity` tickets.
+///
+/// Applies the early-bird discount when `raffle.tickets_sold` is below the
+/// configured threshold and returns the gross, discount, fee, net charge, and
+/// effective per-ticket price.  Both `buy_tickets` and `preview_buy` route
+/// through this function so quote and execution cannot diverge.
+pub(crate) fn calculate_buy_quote(raffle: &Raffle, quantity: u32) -> Result<BuyQuote, Error> {
+    if quantity == 0 {
+        return Err(Error::InvalidQuantity);
+    }
+
+    let gross = raffle
+        .ticket_price
+        .checked_mul(quantity as i128)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    let discount = if raffle.early_bird_discount_bp > 0
+        && raffle.early_bird_ticket_percentage > 0
+    {
+        let threshold = (raffle.max_tickets as u64)
+            .checked_mul(raffle.early_bird_ticket_percentage as u64)
+            .ok_or(Error::ArithmeticOverflow)?
+            / 100;
+        if (raffle.tickets_sold as u64) < threshold {
+            gross
+                .checked_mul(raffle.early_bird_discount_bp as i128)
+                .ok_or(Error::ArithmeticOverflow)?
+                / 10000
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let net_to_pay = gross
+        .checked_sub(discount)
+        .ok_or(Error::ArithmeticOverflow)?;
+
+    let fee = net_to_pay
+        .checked_mul(raffle.protocol_fee_bp as i128)
+        .ok_or(Error::ArithmeticOverflow)?
+        / 10000;
+
+    let effective_ticket_price = net_to_pay / (quantity as i128);
+
+    Ok(BuyQuote {
+        gross,
+        discount,
+        fee,
+        net_to_pay,
+        effective_ticket_price,
+    })
+}
+
 pub(crate) fn build_internal_seed_u64(env: &Env) -> u64 {
     use soroban_sdk::xdr::ToXdr;
     let xdr = (
