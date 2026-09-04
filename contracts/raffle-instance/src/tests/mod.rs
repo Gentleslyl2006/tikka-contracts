@@ -1,4 +1,4 @@
-#![cfg(test)]
+#c[cfg(test)]
 
 pub mod budget;
 pub mod fairness;

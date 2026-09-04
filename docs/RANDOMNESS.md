@@ -48,8 +48,8 @@ In the single-oracle mode, a single trusted oracle is responsible for generating
 4. The contract verifies the VRF proof on-chain using the Oracle's public key. If the proof is valid, the random seed is accepted.
 
 ### Trust Model & Mitigations
-- **Unpredictability**: Because VRF proofs are cryptographically tied to the Oracle's private key, the random seed is completely unpredictable to anyone (including the players) before it is submitted.
-- **Non-manipulability**: The Oracle cannot bias the randomness because there is only one valid VRF output for a given input (`request_id` + contract address). The Oracle's only options are to submit the correct value or refuse to submit (causing a Denial of Service, which is monitored and alerted).
+- *Unpredictability*: Because VRF proofs are cryptographically tied to the Oracle's private key, the random seed is completely unpredictable to anyone (including the players) before it is submitted.
+- *Non-manipulation*: The Oracle cannot bias the randomness because there is only one valid VRF output for a given input (`request_id` + contract address`). The Oracle's only options are to submit the correct value or refuse to submit (causing a Denial of Service, which is monitored and alerted).
 
 ---
 
@@ -863,3 +863,27 @@ fn audit_raffle_draw(env: &Env, raffle_contract: &Address) -> Result<AuditReport
 To prevent a malicious or lazy $k$-th oracle from holding the raffle hostage indefinitely, the contract implements:
 - **Draw Timeouts**: If a quorum is not reached within a specified block window, the raffle can be cancelled, and all ticket buyers are refunded.
 - **Slashed Stake / Operator Penalties**: Node operators who fail to submit within the timeout window can be penalized on-chain or removed from the active oracle set.
+
+---
+
+## 4. Internal Seed Construction (Draw Seed)
+
+For deterministic winner selection, the contract derives an internal seed by hashing the XDR encoding of a tuple containing the ledger timestamp, ledger sequence number, network identifier, and raffle contract address.
+
+### Byte Layout
+The raw value fed to `hash_bytes32`is the XDR serialization of:
+
+```
+(timestamp: u64, sequence: u32, network_id: BytesN<32>, raffle_address: Address)
+```
+
+Where:
+
+- `timestamp` is `env.ledger().timestamp()`.
+- `sequence` is `env.ledger().sequence()`.
+- `network_id` is `env.network_id()`, which is the network passphrase identifier (e.g. main, 4testnet, futurenet). This ensures that identical raffle parameters produce different draws on different networks.
+- `raffle_address` is the current contract address (`env.current_contract_address()`), which uniquely identifies the raffle instance.
+
+The XDR tuple is hashed using SHA-256 (`hash_bytes32`). The returned `BytesN<32>` seed is converted to the `u64` internal seed by taking the first 8 bytes of the SHA-256 output and interpreting them as a big-endian integer.
+
+This is the only internal seed construction in the crate; all callers use `build_internal_seed_u64(env, &env.current_contract_address())`.
