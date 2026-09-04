@@ -20,8 +20,8 @@ fn buy_tickets_rejects_quantity_above_per_tx_cap() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -77,8 +77,8 @@ fn buy_tickets_rejects_overflowing_total_price_without_wrapping() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -142,15 +142,15 @@ fn setup_scale_raffle(
     max_tickets_per_tx: u32,
     prize_amount: i128,
 ) -> (
-    ContractClient<'_>,
+    RaffleInstanceClient<'_>,
     Address,
     Address,
     Address,
     Address,
     token::StellarAssetClient<'_>,
 ) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -324,8 +324,8 @@ fn test_bundle_pricing_applies() {
     token_client.mint(&creator, &100_000_000);
     token_client.mint(&buyer, &100_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Bundle test"),
@@ -445,8 +445,8 @@ fn test_adversarial_ceiling_rounding() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Adversarial Rounding"),
@@ -510,8 +510,8 @@ fn setup_per_address_cap(
     allow_multiple: bool,
     max_tickets: u32,
 ) -> TicketSetup<'_> {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -690,8 +690,8 @@ fn gifted_tickets_charge_buyer_and_assign_owner_to_recipient() {
 fn cap_cannot_exceed_max_tickets() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
