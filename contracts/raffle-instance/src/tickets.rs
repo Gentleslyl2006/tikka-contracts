@@ -263,6 +263,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
             owner: buyer.clone(),
             purchase_time: timestamp,
             ticket_number: ticket_id,
+            price_paid: raffle.ticket_price,
         };
         env.storage()
             .persistent()

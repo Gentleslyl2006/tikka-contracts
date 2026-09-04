@@ -234,6 +234,9 @@ pub(crate) fn refund_ticket(env: Env, caller: Address, ticket_id: u32) -> Result
         .set(&DataKey::TicketRefunded(ticket_id), &true);
 
     let token_client = token::Client::new(&env, &raffle.payment_token);
+    token_client.try_transfer(&env.current_contract_address(), &ticket.owner, &ticket.price_paid).map_err(|_| Error::TokenTransferFailed)?;
+    TicketRefunded { buyer: ticket.owner, ticket_number: ticket.ticket_number, amount: ticket.price_paid, timestamp: env.ledger().timestamp() }.publish(&env);
+    Ok(ticket.price_paid)
     token_client
         .try_transfer(
             &env.current_contract_address(),
