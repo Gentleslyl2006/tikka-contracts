@@ -207,10 +207,10 @@ describe('EventListenerService', () => {
   });
 
   it('aggregates RPC failures into exactly one alert within the rate-limit window', async () => {
-    const originalRateLimitMs = process.env.ALERT_RATE_LIMIT_MS;
-    const originalThreshold = process.env.ALERT_RPC_UNREACHABLE_THRESHOLD;
-    process.env.ALERT_RATE_LIMIT_MS = '60000';
-    process.env.ALERT_RPC_UNREACHABLE_THRESHOLD = '1';
+    const originalRateLimitMs = process.env['ALERT_RATE_LIMIT_MS'];
+    const originalThreshold = process.env['ALERT_RPC_UNREACHABLE_THRESHOLD'];
+    process.env['ALERT_RATE_LIMIT_MS'] = '60000';
+    process.env['ALERT_RPC_UNREACHABLE_THRESHOLD'] = '1';
 
     try {
       let iterations = 0;
@@ -254,8 +254,8 @@ describe('EventListenerService', () => {
       expect(body.type).toBe('rpc_unreachable');
       expect(body.severity).toBe('critical');
     } finally {
-      if (originalRateLimitMs === undefined) delete process.env.ALERT_RATE_LIMIT_MS; else process.env.ALERT_RATE_LIMIT_MS = originalRateLimitMs;
-      if (originalThreshold === undefined) delete process.env.ALERT_RPC_UNREACHABLE_THRESHOLD; else process.env.ALERT_RPC_UNREACHABLE_THRESHOLD = originalThreshold;
+      if (originalRateLimitMs === undefined) delete process.env['ALERT_RATE_LIMIT_MS']; else process.env['ALERT_RATE_LIMIT_MS'] = originalRateLimitMs;
+      if (originalThreshold === undefined) delete process.env['ALERT_RPC_UNREACHABLE_THRESHOLD']; else process.env['ALERT_RPC_UNREACHABLE_THRESHOLD'] = originalThreshold;
     }
   });
 });

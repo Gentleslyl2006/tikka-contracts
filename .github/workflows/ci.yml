@@ -19,21 +19,24 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Must match STELLAR_CLI_VERSION in scripts/common.sh (issues #841, #843).
+  STELLAR_CLI_VERSION: "23.4.1"
 
 jobs:
   build_and_test:
     name: Build, Test, and Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
-      with:
-        toolchain: stable
-        targets: wasm32-unknown-unknown
-        components: clippy, rustfmt
+    # rust-toolchain.toml is the single source of truth for the compiler
+    # version, components and WASM target (issues #841, #843).
+    - name: Set up pinned Rust toolchain
+      run: |
+        rustup toolchain install "$(awk -F'"' '/^channel/ { print $2; exit }' rust-toolchain.toml)"
+        rustup show
 
     - name: Rust Cache
       uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
@@ -47,8 +50,11 @@ jobs:
     - name: Check for Orphaned Modules
       run: python3 scripts/check_orphan_modules.py
 
+    # Build through the Stellar CLI so CI produces the same artifacts the deploy
+    # scripts upload — previously CI built wasm32-unknown-unknown while
+    # deploy-testnet.sh deployed wasm32v1-none (issue #841).
     - name: Build Contracts
-      run: cargo build --target wasm32-unknown-unknown --release
+      run: stellar contract build
 
     - name: Check WASM Binary Size (128KB limit + baseline delta)
       run: python3 scripts/check_wasm_sizes.py
@@ -90,6 +96,7 @@ jobs:
   shellcheck:
     name: Shell Script Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install shellcheck
@@ -100,6 +107,7 @@ jobs:
   oracle_check:
     name: Oracle Service CI
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: oracle
@@ -111,13 +119,14 @@ jobs:
           cache: 'npm'
           cache-dependency-path: oracle/package-lock.json
       - name: Install dependencies
+        timeout-minutes: 5
         run: npm ci
       - name: Check formatting (Prettier)
         run: npm run format:check
       - name: Lint (ESLint)
         run: npm run lint
       - name: TypeScript compile check
-        run: npm run build
+        run: npm run typecheck
       - name: Run tests
         run: npm run test:ci
 

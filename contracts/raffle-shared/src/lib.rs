@@ -176,7 +176,11 @@ pub struct RecurringRaffleConfig {
 pub struct RaffleConfig {
     /// Human-readable raffle description.
     pub description: String,
-    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is true).
+    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is
+    /// true). Exclusive boundary: sales are open while
+    /// `ledger_timestamp < end_time`; the deadline is reached starting at
+    /// `ledger_timestamp == end_time`. Validated at `init` to be strictly in
+    /// the future. See `docs/GLOSSARY.md` § "End Time".
     pub end_time: u64,
     /// If true, raffle can remain open without a hard end timestamp.
     pub no_deadline: bool,
@@ -302,6 +306,18 @@ impl Ticket {
             payer: owner,
         }
     }
+}
+
+/// A single drawn winner and their claim state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct Winner {
+    /// Address that owns the winning ticket at draw time.
+    pub address: Address,
+    /// True once this tier's prize has been paid out or swept.
+    pub claimed: bool,
+    /// Index into `Raffle::prizes` identifying the tier won.
+    pub tier_index: u32,
 }
 
 /// Audit data proving how a draw outcome was derived.
@@ -493,18 +509,24 @@ macro_rules! impl_require_not_paused {
     };
 }
 
+/// Unit tests for RaffleConfig defaults and resolution (#734).
 #[cfg(test)]
 mod test {
     use super::*;
     use soroban_sdk::{Env, String, Address, BytesN, Vec};
+    /// Helper to construct a canonical test configuration with explicit documented defaults.
     fn default_config(env: &Env) -> RaffleConfig {
-        let payment_token = Address::from_string(&String::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"));
+        let payment_token = Address::from_string(&String::from_str(
+            env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ));
         RaffleConfig {
             description: String::from_str(env, "Test"),
             end_time: 0,
             no_deadline: true,
             max_tickets: 10,
             max_tickets_per_tx: 10,
+            // 0 = unlimited per-address ticket purchases in default test setup
             max_tickets_per_address: 0,
             min_tickets: 1,
             allow_multiple: true,
@@ -525,11 +547,27 @@ mod test {
             early_bird_ticket_percentage: 0,
             early_bird_discount_bp: 0,
             category: None,
+            // Default to false so an address can win multiple tiers unless unique winner mode is enabled
             unique_winners: false,
+            // Default to an empty vector; bundle pricing is optional and disabled by default
             bundles: Vec::new(env),
+            // Default to None; prize payout defaults to payment_token when prize_token is not overridden
             prize_token: None,
+            // Default to None; receipt NFT minting is opt-in and disabled by default
             nft_contract: None,
         }
+    }
+
+    #[test]
+    fn test_default_config_has_expected_defaults() {
+        let env = Env::default();
+        let config = default_config(&env);
+
+        assert_eq!(config.unique_winners, false);
+        assert!(config.bundles.is_empty());
+        assert_eq!(config.prize_token, None);
+        assert_eq!(config.nft_contract, None);
+        assert_eq!(config.max_tickets_per_address, 0);
     }
 
     #[test]

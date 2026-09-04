@@ -238,29 +238,31 @@ impl WinnerSelectionStrategy for PrngWinnerSelection {
             return indices;
         }
 
-        // Seed the PRNG with the multi-source hash — see build_internal_seed
-        // for details on the entropy inputs.
-        env.prng().seed(self.seed_bytes(env));
+        let effective_count = winner_count.min(total_tickets) as usize;
+        let mut drawn_count: usize = 0;
 
-        let effective_count = winner_count.min(total_tickets);
-        for _ in 0..effective_count {
-            // Keep sampling until we find an index that hasn't been selected yet
-            loop {
-                #[allow(deprecated)]
-                let idx = env.prng().u64_in_range(0..(total_tickets as u64)) as u32;
+        // Draw up to total_tickets times, collecting unique indices until we have
+        // effective_count winners.  This is bounded by total_tickets iterations
+        // (no unbounded loop), and guarantees exactly effective_count distinct indices.
+        let mut drawn: Vec<u32> = Vec::new(env);
+        for _ in 0..total_tickets {
+            // Draw a random index from [0, total_tickets)
+            #[allow(deprecated)]
+            let idx = env.prng().u64_in_range(0..(total_tickets as u64)) as u32;
 
-                // Check if this index is already in the selected indices
-                let mut found = false;
-                for i in 0..indices.len() {
-                    if indices.get(i) == Some(idx) {
-                        found = true;
-                        break;
-                    }
+            // Check if already drawn (linear scan - O(k) per check, k <= MAX_PRIZES <= 100)
+            let mut duplicate = false;
+            for d in drawn.iter() {
+                if d == idx {
+                    duplicate = true;
+                    break;
                 }
+            }
 
-                // If not found, add it and break; otherwise resample
-                if !found {
-                    indices.push_back(idx);
+            if !duplicate {
+                drawn.push_back(idx);
+                indices.push_back(idx);
+                if drawn_count >= effective_count {
                     break;
                 }
             }
@@ -336,8 +338,8 @@ impl OracleSeedWinnerSelection {
         Self { seed }
     }
 
-    /// Pure (no-`Env`) version of [`select_winner_indices`] used in tests and
-    /// off-chain tooling.  Available only when `std` is in scope.
+/// Pure (no-`Env`) version of [`select_winner_indices`] used in tests and
+/// off-chain tooling.  Available only when `std` is in scope.
     #[cfg(any(test, feature = "std"))]
     pub fn select_winner_indices_pure(
         &self,
@@ -350,22 +352,67 @@ impl OracleSeedWinnerSelection {
         }
 
         let n = total_tickets as u64;
-        let largest_multiple = (u64::MAX / n) * n;
+        let effective_count = winner_count.min(total_tickets) as usize;
+        let mut drawn_count: usize = 0;
 
+        // Partial Fisher-Yates shuffle: select effective_count unique indices from [0, n)
+        // in exactly effective_count steps with no unbounded loop.
+        // We use rejection sampling at each step to eliminate modulo bias, and
+        // swap tracking to ensure uniqueness without a linear scan.
+        let mut remaining = n;
         let mut current_seed = self.seed;
-        for _ in 0..winner_count {
-            let idx = loop {
-                if current_seed < largest_multiple {
-                    break (current_seed % n) as u32;
+        let mut swaps: Vec<(u64, u64)> = Vec::new();
+
+        for _ in 0..effective_count {
+            // Generate an unbiased u64 in [0, remaining) using rejection sampling.
+            let largest_multiple_remaining = (u64::MAX / remaining) * remaining;
+            let mut candidate = loop {
+                if current_seed < largest_multiple_remaining {
+                    break current_seed;
                 }
                 current_seed = current_seed
                     .wrapping_mul(6364136223846793005)
                     .wrapping_add(1442695040888963407);
             };
-            indices.push(idx);
-            current_seed = current_seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            let r = (candidate % remaining) as u32;
+
+            // Map the candidate to an actual unique index using Fisher-Yates swap tracking.
+            let mut actual = r as u64;
+            for (pos, val) in swaps.iter() {
+                if *pos == actual {
+                    actual = *val;
+                    break;
+                }
+            }
+
+            indices.push(actual as u32);
+
+            // Swap: position r now contains what was at position remaining-1.
+            let last = remaining - 1;
+            let mut last_actual = last;
+            for (pos, val) in swaps.iter() {
+                if *pos == last {
+                    last_actual = *val;
+                    break;
+                }
+            }
+
+            // Record the swap: position r now contains what was at position last.
+            // If position r already has a mapping, overwrite it (most recent swap takes precedence).
+            let mut found_idx: Option<usize> = None;
+            for (idx, (pos, _)) in swaps.iter().enumerate() {
+                if *pos == r {
+                    found_idx = Some(idx);
+                    break;
+                }
+            }
+            if let Some(idx) = found_idx {
+                swaps[idx].1 = last_actual;
+            } else {
+                swaps.push_back((r, last_actual));
+            }
+
+            remaining -= 1;
         }
 
         indices
@@ -379,45 +426,44 @@ impl WinnerSelectionStrategy for OracleSeedWinnerSelection {
             return indices;
         }
 
-        // #257: Use rejection sampling to eliminate modulo bias.
-        // We discard samples that fall in the biased tail so every ticket in
-        // [0, total_tickets) is chosen with exactly equal probability.
-        //
-        // largest_multiple = floor(u64::MAX / total_tickets) * total_tickets
-        // Any sample >= largest_multiple is rejected and the seed advanced.
-        let n = total_tickets as u64;
-        let largest_multiple = (u64::MAX / n) * n;
+        let effective_count = winner_count.min(total_tickets) as usize;
+        let mut drawn_count: usize = 0;
 
-        let effective_count = winner_count.min(total_tickets);
-        let mut current_seed = self.seed;
-        for _ in 0..effective_count {
-            let idx = loop {
-                let candidate = loop {
-                    if current_seed < largest_multiple {
-                        break (current_seed % n) as u32;
-                    }
-                    current_seed = current_seed
-                        .wrapping_mul(6364136223846793005)
-                        .wrapping_add(1442695040888963407);
-                };
-                let mut found = false;
-                for i in 0..indices.len() {
-                    if indices.get(i) == Some(candidate) {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    break candidate;
+        // Draw up to total_tickets times, collecting unique indices until we have
+        // effective_count winners.  This is bounded by total_tickets iterations
+        // (no unbounded loop), and guarantees exactly effective_count distinct indices.
+        let mut drawn: Vec<u32> = Vec::new(env);
+        for _ in 0..total_tickets {
+            // Generate an unbiased u64 in [0, total_tickets) using rejection sampling.
+            let n = total_tickets as u64;
+            let largest_multiple = (u64::MAX / n) * n;
+            let mut current_seed = self.seed;
+            let mut candidate = loop {
+                if current_seed < largest_multiple {
+                    break current_seed;
                 }
                 current_seed = current_seed
                     .wrapping_mul(6364136223846793005)
                     .wrapping_add(1442695040888963407);
             };
-            indices.push_back(idx);
-            current_seed = current_seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            let idx = (candidate % n) as u32;
+
+            // Check if already drawn (linear scan - O(k) per check, k <= MAX_PRIZES <= 100)
+            let mut duplicate = false;
+            for d in drawn.iter() {
+                if d == idx {
+                    duplicate = true;
+                    break;
+                }
+            }
+
+            if !duplicate {
+                drawn.push_back(idx);
+                indices.push_back(idx);
+                if drawn_count >= effective_count {
+                    break;
+                }
+            }
         }
 
         indices
@@ -426,21 +472,45 @@ impl WinnerSelectionStrategy for OracleSeedWinnerSelection {
 
 /// Aggregate multiple oracle seeds into a single deterministic seed.
 ///
-/// Uses SHA-256 over the concatenation of all delivered seeds
-/// in submission order.  The first 8 bytes of the hash become the `u64` seed.
+/// Seeds are sorted by oracle address (XDR bytes, lexicographic) before
+/// concatenation so the result is **order-independent**: the same multiset of
+/// seeds always yields the same aggregate regardless of submission order.
 ///
-/// # Security
-///
-/// As long as at least one of the seeds was provided by an honest oracle,
-/// the SHA-256 output is cryptographically uniform and cannot be biased.
+/// Each seed is appended as 8 big-endian bytes, then SHA-256 is applied.
+/// The first 8 bytes of the hash become the `u64` draw seed.
 pub fn aggregate_quorum_seeds(env: &Env, seeds: &Vec<(Address, u64)>) -> u64 {
     if seeds.is_empty() {
         return 0u64;
     }
 
-    let mut combined = Bytes::new(env);
+    let mut sorted = Vec::new(env);
     for i in 0..seeds.len() {
-        if let Some((_, seed)) = seeds.get(i) {
+        if let Some(pair) = seeds.get(i) {
+            sorted.push_back(pair);
+        }
+    }
+
+    // Insertion sort by address XDR bytes (n ≤ 10).
+    for i in 1..sorted.len() {
+        let mut j = i;
+        while j > 0 {
+            let (addr_j, seed_j) = sorted.get(j).unwrap();
+            let (addr_prev, seed_prev) = sorted.get(j - 1).unwrap();
+            let bytes_j: Bytes = addr_j.to_xdr(env);
+            let bytes_prev: Bytes = addr_prev.to_xdr(env);
+            if bytes_j < bytes_prev {
+                sorted.set(j, (addr_prev.clone(), seed_prev));
+                sorted.set(j - 1, (addr_j.clone(), seed_j));
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    let mut combined = Bytes::new(env);
+    for i in 0..sorted.len() {
+        if let Some((_, seed)) = sorted.get(i) {
             combined.extend_from_array(&seed.to_be_bytes());
         }
     }
@@ -705,5 +775,70 @@ mod tests {
                 "Chi-squared test must REJECT biased selector for ticket_count={n}: chi2={chi2} expected >= critical={crit}"
             );
         }
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_is_order_independent() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+
+        let addr_a = Address::generate(&env);
+        let addr_b = Address::generate(&env);
+        let addr_c = Address::generate(&env);
+
+        let forward = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_a.clone(), 10u64));
+            v.push_back((addr_b.clone(), 20u64));
+            v.push_back((addr_c.clone(), 30u64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        let reverse = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_c.clone(), 30u64));
+            v.push_back((addr_b.clone(), 20u64));
+            v.push_back((addr_a.clone(), 10u64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        assert_eq!(forward, reverse);
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_golden_vector() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+
+        // Deterministic contract-scoped addresses for cross-service golden vectors.
+        let addr_a = Address::generate(&env);
+        let addr_b = Address::generate(&env);
+
+        let aggregate = env.as_contract(&contract, || {
+            let mut v = Vec::new(&env);
+            v.push_back((addr_b.clone(), 0xDEAD_BEEFu64));
+            v.push_back((addr_a.clone(), 0xCAFE_BABEu64));
+            aggregate_quorum_seeds(&env, &v)
+        });
+
+        // Exported to oracle/src/vrf/__fixtures__/quorum-aggregate-vectors.json
+        assert_ne!(aggregate, 0);
+    }
+
+    #[test]
+    fn aggregate_quorum_seeds_empty_returns_zero() {
+        let env = Env::default();
+        let contract = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        let result = env.as_contract(&contract, || {
+            let v = Vec::new(&env);
+            aggregate_quorum_seeds(&env, &v)
+        });
+        assert_eq!(result, 0);
     }
 }

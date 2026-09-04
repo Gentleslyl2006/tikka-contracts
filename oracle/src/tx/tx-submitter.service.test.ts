@@ -26,7 +26,7 @@ jest.mock('@stellar/stellar-sdk', () => {
  * Run against testnet with a funded oracle account and deployed raffle contract.
  */
 describe('TxSubmitterService integration', () => {
-  const runIntegration = process.env.STELLAR_INTEGRATION_TEST === '1';
+  const runIntegration = process.env['STELLAR_INTEGRATION_TEST'] === '1';
 
   (runIntegration ? it : it.skip)(
     'submits provide_randomness to testnet contract',
@@ -34,13 +34,13 @@ describe('TxSubmitterService integration', () => {
       const keyService = new KeyService();
       await keyService.initialize();
 
-      const raffleContract = process.env.RAFFLE_CONTRACT_ADDRESS;
-      const requestId = process.env.RANDOMNESS_REQUEST_ID;
+      const raffleContract = process.env['RAFFLE_CONTRACT_ADDRESS'];
+      const requestId = process.env['RANDOMNESS_REQUEST_ID'];
       if (!raffleContract || !requestId) {
         throw new Error('RAFFLE_CONTRACT_ADDRESS and RANDOMNESS_REQUEST_ID required');
       }
 
-      const randomSeed = BigInt(process.env.RANDOMNESS_SEED ?? '42');
+      const randomSeed = BigInt(process.env['RANDOMNESS_SEED'] ?? '42');
       const message = buildVrfProofMessage(raffleContract, BigInt(requestId), randomSeed);
       const proof = keyService.sign(message);
       const publicKey = keyService.getPublicKeyBytes();

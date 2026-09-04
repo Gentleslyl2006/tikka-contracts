@@ -12,6 +12,9 @@
 # To add more maintainers, append their GitHub usernames to each pattern
 # (or create a real `maintainers` team in the org and use `@maintainers` again).
 
+# NOTE: Previously used @maintainers (invalid reference). Replaced with top contributor.
+# Maintainers: adjust owner list to match your team/org structure.
+
 # Global fallback - all files
 * @Otaiki1
 
