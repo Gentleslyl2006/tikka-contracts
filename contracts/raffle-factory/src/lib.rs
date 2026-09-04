@@ -10,6 +10,7 @@ use soroban_sdk::{
 use soroban_sdk::testutils::Address as _;
 
 mod events;
+mod views;
 
 pub mod registry;
 
@@ -202,6 +203,8 @@ pub enum DataKey {
     /// blocks `create_raffle`, leaving all other admin operations, reads, and
     /// any raffles already in flight unaffected.
     CreationPaused,
+    /// Used to authorize factory-deployed raffles in cross-contract calls.
+    ValidRaffle(Address),
 }
 
 /// A read-only snapshot of key factory metrics returned by
@@ -342,7 +345,7 @@ fn maybe_create_checkpoint(env: &Env, raffle_count: u32) {
 ///
 /// `nonce` is the factory's [`DataKey::NextRaffleId`] at creation time (see
 /// [`RaffleFactory::get_next_raffle_id`] / [`RaffleFactory::predict_raffle_address`]).
-fn compute_raffle_salt(env: &Env, creator: &Address, nonce: u64) -> BytesN<32> {
+pub(crate) fn compute_raffle_salt(env: &Env, creator: &Address, nonce: u64) -> BytesN<32> {
     let payload = (creator.clone(), nonce).to_xdr(env);
     env.crypto().sha256(&payload).into()
 }
@@ -438,6 +441,10 @@ fn create_raffle_internal(
     env.storage()
         .persistent()
         .set(&DataKey::NextRaffleId, &(stable_id.saturating_add(1)));
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::ValidRaffle(raffle_address.clone()), &true);
 
     let mut creator_raffles: Vec<Address> = env
         .storage()
@@ -1172,100 +1179,11 @@ impl RaffleFactory {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Return a snapshot of key factory metrics.
-    ///
-    /// This is a read-only call with no auth requirement. All fields default to
-    /// zero/false when the factory has just been initialized and no raffles have
-    /// been created.
-    pub fn get_protocol_stats(env: Env) -> ProtocolStats {
-        let total_raffles_created: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalRafflesCreated)
-            .unwrap_or(0);
-        let protocol_fee_bp: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ProtocolFeeBP)
-            .unwrap_or(0);
-        let paused: bool = env
-            .storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
-        let total_unique_participants: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalUniqueParticipants)
-            .unwrap_or(0);
 
-        ProtocolStats {
-            total_raffles_created,
-            protocol_fee_bp,
-            paused,
-            total_unique_participants,
-        }
-    }
 
-    /// O(1) direct lookup of a raffle address by its stable ID.
-    /// Returns `None` if the ID was never assigned or has been cleaned up.
-    pub fn get_raffle_by_id(env: Env, raffle_id: u32) -> Option<Address> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RaffleById(raffle_id))
-    }
 
-    /// Returns the stable ID that will be assigned to the next raffle.
-    /// IDs in [0, next_raffle_id) have been assigned at least once.
-    ///
-    /// Pass this value as `nonce` to [`predict_raffle_address`](Self::predict_raffle_address)
-    /// to precompute the instance address for the next [`create_raffle`](Self::create_raffle).
-    pub fn get_next_raffle_id(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::NextRaffleId)
-            .unwrap_or(0u32)
-    }
 
-    /// Predict the deterministic contract address for a raffle before deployment.
-    ///
-    /// The address is derived from this factory's address and
-    /// `SHA-256(XDR(creator) ‖ XDR(nonce))` via
-    /// [`Env::deployer`]`.`with_current_contract`.
-    ///
-    /// For the next raffle a creator will receive, use
-    /// `nonce = get_next_raffle_id() as u64`.
-    ///
-    /// # Parameters
-    ///
-    /// - `creator` — Address that will create the raffle.
-    /// - `nonce` — Deployment salt input; must match the factory's
-    ///   [`get_next_raffle_id`](Self::get_next_raffle_id) at `create_raffle` time.
-    pub fn predict_raffle_address(env: Env, creator: Address, nonce: u64) -> Address {
-        let salt = compute_raffle_salt(&env, &creator, nonce);
-        env.deployer()
-            .with_current_contract(salt)
-            .deployed_address()
-    }
 
-    /// Returns the current count of live (non-tombstoned) raffles.
-    pub fn get_raffle_count(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RaffleCount)
-            .unwrap_or(0u32)
-    }
-
-    /// Return the cumulative ticket-sale volume for a specific `asset` token.
-    ///
-    /// Returns `0` when no volume has been recorded for `asset`. No auth
-    /// required.
-    pub fn get_total_volume(env: Env, asset: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TotalVolumePerAsset(asset))
-            .unwrap_or(0)
-    }
 
     /// Accumulate `amount` into the running volume counter for `asset`.
     ///
@@ -1298,18 +1216,6 @@ impl RaffleFactory {
         Ok(())
     }
 
-    /// Return the current admin address.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::NotAuthorized`] — admin key is missing (factory not
-    ///   initialized).
-    pub fn get_admin(env: Env) -> Result<Address, ContractError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(ContractError::NotAuthorized)
-    }
 
     /// Return a paginated slice of all live raffle addresses.
     ///
@@ -1337,8 +1243,6 @@ impl RaffleFactory {
             .get(&DataKey::NextRaffleId)
             .unwrap_or(0u32);
 
-        let lim = effective_limit(params.limit);
-        let offset = params.offset;
 
         let total: u32 = env
             .storage()
@@ -1585,16 +1489,7 @@ impl RaffleFactory {
         Ok(())
     }
 
-    pub fn get_checkpoint(env: Env, index: u32) -> Option<StateCheckpoint> {
-        env.storage().persistent().get(&DataKey::Checkpoint(index))
-    }
 
-    pub fn get_latest_checkpoint_index(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::LatestCheckpointIndex)
-            .unwrap_or(0u32)
-    }
 
     pub fn sync_admin(env: Env, instance_address: Address) -> Result<(), ContractError> {
         let admin = require_admin(&env)?;
@@ -1645,23 +1540,7 @@ impl RaffleFactory {
         Ok(())
     }
 
-    pub fn get_unique_participants(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&DataKey::TotalUniqueParticipants)
-            .unwrap_or(0)
-    }
 
-    pub fn get_raffle_fairness_data(
-        env: Env,
-        raffle_id: Address,
-    ) -> Result<FairnessData, ContractError> {
-        Ok(env.invoke_contract::<FairnessData>(
-            &raffle_id,
-            &Symbol::new(&env, "get_fairness_data"),
-            ().into_val(&env),
-        ))
-    }
 
     pub fn set_creation_delay(env: Env, delay_seconds: u64) -> Result<(), ContractError> {
         require_admin(&env)?;
@@ -1911,6 +1790,9 @@ impl RaffleFactory {
         total_volume: i128,
     ) -> Result<(), ContractError> {
         raffle_address.require_auth();
+        if !env.storage().persistent().has(&DataKey::ValidRaffle(raffle_address.clone())) {
+            return Err(ContractError::NotAuthorized);
+        }
         Self::upsert_leaderboard(&env, &DataKey::TopByTickets, raffle_address.clone(), tickets_sold);
         Self::upsert_leaderboard(&env, &DataKey::TopByPrize, raffle_address.clone(), prize_amount);
         Self::upsert_leaderboard(&env, &DataKey::TopByVolume, raffle_address, total_volume);
@@ -2226,6 +2108,9 @@ impl RaffleFactory {
 mod tests {
     #[path = "tests/governance.rs"]
     mod governance;
+
+    #[path = "tests/views.rs"]
+    mod views;
 
     use super::*;
     use raffle_shared::{RandomnessSource, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};

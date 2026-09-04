@@ -760,6 +760,11 @@ fn quorum_storage_cleared_allows_redraw() {
 
     // Simulate a re-draw by re-arming drawing state (same oracles, new request).
     env.as_contract(&contract_id, || {
+        let has_submitted = env.storage().persistent().has(&DataKey::QuorumSubmittedOracles);
+        assert!(!has_submitted, "QuorumSubmittedOracles should be cleared after finalization");
+        assert!(!env.storage().persistent().has(&DataKey::QuorumSeed(oracle_a.clone())), "QuorumSeed for oracle_a should be cleared");
+        assert!(!env.storage().persistent().has(&DataKey::QuorumSeed(oracle_b.clone())), "QuorumSeed for oracle_b should be cleared");
+
         let mut raffle = crate::read_raffle(&env).unwrap();
         raffle.status = RaffleStatus::Drawing;
         crate::write_raffle(&env, &raffle);
@@ -767,9 +772,6 @@ fn quorum_storage_cleared_allows_redraw() {
         env.storage()
             .instance()
             .set(&DataKey::RandomnessRequestId, &999u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::QuorumSubmittedOracles, &Vec::<Address>::new(&env));
     });
 
     // Same oracles can submit again on the new request.
@@ -777,4 +779,131 @@ fn quorum_storage_cleared_allows_redraw() {
     assert_eq!(client.get_raffle().status, RaffleStatus::Drawing);
     client.provide_quorum_randomness(&oracle_b, &444, &999);
     assert_eq!(client.get_raffle().status, RaffleStatus::Finalized);
+}
+
+#[test]
+fn test_unique_winners_single_owner_terminates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let payment_token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    let token_mint = StellarAssetClient::new(&env, &payment_token);
+    token_mint.mint(&creator, &1_000_000);
+    token_mint.mint(&buyer, &1_000_000);
+
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let config = RaffleConfig {
+        description: String::from_str(&env, "Single owner unique winners"),
+        end_time: 0,
+        no_deadline: true,
+        max_tickets: 5,
+        max_tickets_per_tx: 5,
+        min_tickets: 1,
+        allow_multiple: true,
+        ticket_price: MIN_TICKET_PRICE,
+        payment_token: payment_token.clone(),
+        prize_amount: MIN_TICKET_PRICE * 5,
+        prizes: soroban_sdk::vec![&env, 5000, 5000],
+        randomness_source: RandomnessSource::Internal,
+        oracle_address: None,
+        protocol_fee_bp: 0,
+        treasury_address: None,
+        swap_router: None,
+        tikka_token: None,
+        unique_winners: true,
+        metadata_hash: BytesN::from_array(&env, &[101; 32]),
+        claim_lockup_seconds: Some(0),
+        swap_deadline_seconds: Some(0),
+    };
+
+    client.init(&factory, &admin, &creator, &config);
+    client.deposit_prize();
+    client.buy_tickets(&buyer, &5);
+
+    client.finalize_raffle();
+
+    let raffle = client.get_raffle();
+    assert_eq!(raffle.status, RaffleStatus::Finalized);
+    assert_eq!(raffle.winners.len(), 2);
+}
+
+#[test]
+fn test_unique_winners_n_distinct_owners_n_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let factory = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer1 = Address::generate(&env);
+    let buyer2 = Address::generate(&env);
+    let buyer3 = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let payment_token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
+    let token_mint = StellarAssetClient::new(&env, &payment_token);
+    token_mint.mint(&creator, &1_000_000);
+    token_mint.mint(&buyer1, &100_000);
+    token_mint.mint(&buyer2, &100_000);
+    token_mint.mint(&buyer3, &100_000);
+
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let config = RaffleConfig {
+        description: String::from_str(&env, "N distinct owners N tiers"),
+        end_time: 0,
+        no_deadline: true,
+        max_tickets: 3,
+        max_tickets_per_tx: 1,
+        min_tickets: 3,
+        allow_multiple: true,
+        ticket_price: MIN_TICKET_PRICE,
+        payment_token: payment_token.clone(),
+        prize_amount: MIN_TICKET_PRICE * 3,
+        prizes: soroban_sdk::vec![&env, 3333, 3333, 3334],
+        randomness_source: RandomnessSource::Internal,
+        oracle_address: None,
+        protocol_fee_bp: 0,
+        treasury_address: None,
+        swap_router: None,
+        tikka_token: None,
+        unique_winners: true,
+        metadata_hash: BytesN::from_array(&env, &[102; 32]),
+        claim_lockup_seconds: Some(0),
+        swap_deadline_seconds: Some(0),
+    };
+
+    client.init(&factory, &admin, &creator, &config);
+    client.deposit_prize();
+
+    client.buy_tickets(&buyer1, &1);
+    client.buy_tickets(&buyer2, &1);
+    client.buy_tickets(&buyer3, &1);
+
+    client.finalize_raffle();
+
+    let raffle = client.get_raffle();
+    assert_eq!(raffle.status, RaffleStatus::Finalized);
+    assert_eq!(raffle.winners.len(), 3);
+
+    let w0 = raffle.winners.get(0).unwrap();
+    let w1 = raffle.winners.get(1).unwrap();
+    let w2 = raffle.winners.get(2).unwrap();
+
+    assert_ne!(w0, w1);
+    assert_ne!(w0, w2);
+    assert_ne!(w1, w2);
 }

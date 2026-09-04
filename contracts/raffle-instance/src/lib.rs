@@ -1,5 +1,7 @@
 #![no_std]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![warn(clippy::arithmetic_side_effects)]
+#![deny(unused)]
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
@@ -25,6 +27,15 @@ pub(crate) use helpers::{
     require_not_paused, request_randomness, transition_status, transition_to_drawing,
     validate_token_address, write_raffle, Guard,
 };
+#[cfg(any(test, feature = "testutils"))]
+pub use helpers::assert_solvent;
+
+#[cfg(any(test, feature = "testutils"))]
+fn assert_solvent_after_success<T>(env: &Env, result: &Result<T, Error>) {
+    if result.is_ok() {
+        helpers::assert_solvent(env);
+    }
+}
 
 use raffle_shared::{
     constants::{
@@ -38,19 +49,16 @@ use raffle_shared::{
     RandomnessSource, RandomnessType, Ticket,
 };
 
-use self::randomness::{
-    build_vrf_proof_message, OracleSeedWinnerSelection, WinnerSelectionStrategy,
-};
+use self::randomness::build_vrf_proof_message;
 
 use crate::events::{
     CancelScheduled, ContractPaused, ContractUnpaused, DrawTriggered, EmergencyWithdrawn,
     FeesWithdrawn, MetadataHashUpdated, OracleAddressUpdated, PrizeClaimed, PrizeDeposited,
-    PrizeRefunded, ProtocolFeeUpdated, RaffleCancelled, RaffleCreated, RaffleFailed,
-    RaffleFinalized, RaffleStatusChanged, OracleSeedDelivered, RandomnessFallbackTriggered,
+    OracleSeedDelivered, PrizeRefunded, ProtocolFeeUpdated, RaffleCancelled, RaffleCreated,
+    RaffleFailed, RaffleFinalized, RaffleStatusChanged, RandomnessFallbackTriggered,
     RandomnessReceived, RandomnessRequested, StorageWiped, SwapDeadlineUpdated, TicketNftMinted,
-    TicketPurchased,
-    TicketRefunded, TicketSalesPaused, TicketSalesResumed, TokensRescued, WinnerDrawn,
-    OracleSeedDelivered,
+    TicketPurchased, TicketRefunded, TicketSalesPaused, TicketSalesResumed, TokensRescued,
+    WinnerDrawn,
 };
 
 const RANDOMNESS_MIN_DELAY_LEDGERS: u32 = 10;
@@ -63,7 +71,17 @@ pub struct RaffleInstance;
 pub struct Raffle {
     pub creator: Address,
     pub description: String,
+    /// Unix timestamp after which ticket sales close and `finalize_raffle`
+    /// may transition the raffle out of `Active`. The boundary is exclusive:
+    /// sales are open while `ledger_timestamp < end_time`, and the deadline
+    /// is reached starting at `ledger_timestamp == end_time` (enforced
+    /// identically by `buy_tickets`, `buy_tickets_for`, and
+    /// `finalize_raffle`; see `docs/GLOSSARY.md` § "End Time"). Ignored when
+    /// `no_deadline` is `true`.
     pub end_time: u64,
+    /// If true, `end_time` is not enforced and the raffle can remain
+    /// `Active` indefinitely until `max_tickets` sells out or the raffle is
+    /// cancelled.
     pub no_deadline: bool,
     pub max_tickets: u32,
     pub max_tickets_per_tx: u32,
@@ -101,6 +119,8 @@ pub struct Raffle {
     pub early_bird_discount_bp: u32,
     pub metadata_hash: BytesN<32>,
     pub unique_winners: bool,
+    /// Tiered bundle pricing from config (validated at init).
+    pub bundles: soroban_sdk::Vec<raffle_shared::TicketBundle>,
     pub nft_contract: Option<Address>,
 }
 
@@ -113,6 +133,7 @@ pub struct FairnessMetadata {
     pub draw_timestamp: u64,
     pub draw_sequence: u32,
     pub unique_winners: bool,
+    pub quorum_contributions: Option<Vec<(Address, u64)>>,
 }
 
 #[soroban_sdk::contracttype]
@@ -135,14 +156,11 @@ pub enum DataKey {
     CommitEntry(u32),
     DrawingLock,
     TicketBuyers,
-    /// Reserved per-owner ticket ID index: owner Address → Vec<u32> of ticket
-    /// IDs. It is not currently written by ticket purchase logic.
     OwnerTickets(Address),
     PendingAdminCancel,
-    /// Quorum randomness: maps registered oracle address → submitted seed.
     QuorumSeed(Address),
-    /// Quorum randomness: ordered list of oracles that have submitted.
     QuorumSubmittedOracles,
+    MetadataHash,
 }
 
 #[contracttype]
@@ -252,11 +270,49 @@ pub enum Error {
     InvalidAdminAddress = 63,
     /// Randomness callback received before the minimum delay. Code 64.
     RandomnessTooEarly = 64,
+    ExceedsMaxTicketsPerAddress = 67,
     CancelTimelockActive = 65,
     CancelNotScheduled = 66,
     ExceedsMaxTicketsPerAddress = 67,
     OracleNotRegistered = 68,
     DuplicateOracleSubmission = 69,
+    CommitAlreadySubmitted = 70,
+}
+
+/// Returns the effective per-address ticket cap, if any.
+///
+/// `max_tickets_per_address` supersedes `allow_multiple`; when unset (0),
+/// `allow_multiple = false` still restricts each address to one ticket.
+fn effective_max_tickets_per_address(raffle: &Raffle) -> Option<u32> {
+    if raffle.max_tickets_per_address > 0 {
+        Some(raffle.max_tickets_per_address)
+    } else if !raffle.allow_multiple {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn enforce_max_tickets_per_address(
+    env: &Env,
+    raffle: &Raffle,
+    address: &Address,
+    quantity: u32,
+) -> Result<(), Error> {
+    if let Some(cap) = effective_max_tickets_per_address(raffle) {
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TicketCount(address.clone()))
+            .unwrap_or(0);
+        let Some(total) = current.checked_add(quantity) else {
+            return Err(Error::ExceedsMaxTicketsPerAddress);
+        };
+        if total > cap {
+            return Err(Error::ExceedsMaxTicketsPerAddress);
+        }
+    }
+    Ok(())
 }
 
 #[contractimpl]
@@ -317,9 +373,17 @@ impl RaffleInstance {
         if config.prizes.len() > MAX_PRIZES {
             return Err(Error::TooManyPrizes);
         }
+        if config.prizes.len() > config.max_tickets {
+            return Err(Error::InvalidParameters);
+        }
         let mut total_prizes_bp = 0u32;
         for prize_bp in config.prizes.iter() {
-            total_prizes_bp += prize_bp;
+            if prize_bp > 10_000 {
+                return Err(Error::InvalidParameters);
+            }
+            total_prizes_bp = total_prizes_bp
+                .checked_add(prize_bp)
+                .ok_or(Error::InvalidParameters)?;
         }
         if total_prizes_bp != 10000 {
             return Err(Error::InvalidParameters);
@@ -387,7 +451,13 @@ if config.randomness_source == RandomnessSource::External {
         let prize_token = config.payment_token.clone();
 
         // Resolve default values for fields that use 0 as "use default"
-        let config = config.resolve_defaults();
+        let mut config = config.resolve_defaults();
+
+        // `allow_multiple = false` is the legacy spelling of a one-ticket cap.
+        // The explicit `max_tickets_per_address` cap supersedes it when set.
+        if !config.allow_multiple && config.max_tickets_per_address == 0 {
+            config.max_tickets_per_address = 1;
+        }
 
         // #259: claim_lockup_seconds must be within [0, MAX_CLAIM_LOCKUP_SECONDS].
         let claim_lockup = config.claim_lockup_seconds.unwrap_or(DEFAULT_CLAIM_LOCKUP_SECONDS);
@@ -452,15 +522,12 @@ if config.randomness_source == RandomnessSource::External {
             early_bird_discount_bp: config.early_bird_discount_bp,
             metadata_hash: config.metadata_hash.clone(),
             unique_winners: config.unique_winners,
-            nft_contract: config.nft_contract,
+            bundles: config.bundles.clone(),
+            nft_contract: config.nft_contract.clone(),
         };
         write_raffle(&env, &raffle);
         env.storage().instance().set(&DataKey::Factory, &factory);
         env.storage().instance().set(&DataKey::Admin, &admin);
-        // Store metadata hash for attestation verification
-        env.storage()
-            .persistent()
-            .set(&DataKey::MetadataHash, &config.metadata_hash);
 
         RaffleCreated {
             raffle_id: env.current_contract_address(),
@@ -479,15 +546,24 @@ if config.randomness_source == RandomnessSource::External {
         }
         .publish(&env);
 
-        Ok(())
+        let result = Ok(());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn deposit_prize(env: Env) -> Result<(), Error> {
-        init::deposit_prize(env)
+        let result = init::deposit_prize(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32, Error> {
-        tickets::buy_tickets(env, buyer, quantity)
+        let result = tickets::buy_tickets(env.clone(), buyer, quantity);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn buy_tickets_for(
@@ -496,15 +572,24 @@ if config.randomness_source == RandomnessSource::External {
         recipient: Address,
         quantity: u32,
     ) -> Result<u32, Error> {
-        tickets::buy_tickets_for(env, buyer, recipient, quantity)
+        let result = tickets::buy_tickets_for(env.clone(), buyer, recipient, quantity);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn submit_commit(env: Env, ticket_id: u32, hash: BytesN<32>) -> Result<(), Error> {
-        tickets::submit_commit(env, ticket_id, hash)
+        let result = tickets::submit_commit(env.clone(), ticket_id, hash);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn finalize_raffle(env: Env) -> Result<(), Error> {
-        draw::finalize_raffle(env)
+        let result = draw::finalize_raffle(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn provide_randomness(
@@ -514,7 +599,10 @@ if config.randomness_source == RandomnessSource::External {
         proof: BytesN<64>,
         request_id: u64,
     ) -> Result<Address, Error> {
-        draw::provide_randomness(env, random_seed, public_key, proof, request_id)
+        let result = draw::provide_randomness(env.clone(), random_seed, public_key, proof, request_id);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     /// Accept a seed from a single oracle in a k-of-n Quorum configuration.
@@ -525,7 +613,7 @@ if config.randomness_source == RandomnessSource::External {
     /// aggregated via `aggregate_quorum_seeds` and the raffle is finalized.
     pub fn provide_quorum_randomness(
         env: Env,
-        caller: Address,
+        oracle: Address,
         random_seed: u64,
         request_id: u64,
     ) -> Result<(), Error> {
@@ -623,8 +711,11 @@ if config.randomness_source == RandomnessSource::External {
             }
 
             let aggregate = randomness::aggregate_quorum_seeds(&env, &seeds);
-            helpers::do_finalize_with_seed(&env, raffle, aggregate, RandomnessType::Vrf)?;
+            helpers::do_finalize_with_seed(&env, raffle, aggregate, RandomnessType::Quorum, Some(seeds))?;
         }
+
+        #[cfg(any(test, feature = "testutils"))]
+        helpers::assert_solvent(&env);
 
         Ok(())
     }
@@ -634,11 +725,17 @@ if config.randomness_source == RandomnessSource::External {
         caller: Address,
         do_refund: bool,
     ) -> Result<(), Error> {
-        draw::trigger_randomness_fallback(env, caller, do_refund)
+        let result = draw::trigger_randomness_fallback(env.clone(), caller, do_refund);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn claim_prize(env: Env, winner: Address, tier_index: u32) -> Result<i128, Error> {
-        claim::claim_prize(env, winner, tier_index)
+        let result = claim::claim_prize(env.clone(), winner, tier_index);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     /// Permissionless sweep of unclaimed prizes to treasury after `claim_expiry_seconds`
@@ -649,11 +746,17 @@ if config.randomness_source == RandomnessSource::External {
         start_index: u32,
         limit: u32,
     ) -> Result<u32, Error> {
-        crate::claim::sweep_unclaimed(env, start_index, limit)
+        let result = crate::claim::sweep_unclaimed(env.clone(), start_index, limit);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn withdraw_fees(env: Env, recipient: Address, amount: i128) -> Result<(), Error> {
-        admin::withdraw_fees(env, recipient, amount)
+        let result = admin::withdraw_fees(env.clone(), recipient, amount);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn get_accumulated_fees(env: Env) -> i128 {
@@ -668,7 +771,10 @@ if config.randomness_source == RandomnessSource::External {
     }
 
     pub fn cancel_raffle(env: Env, reason: CancelReason) -> Result<(), Error> {
-        admin::cancel_raffle(env, reason)
+        let result = admin::cancel_raffle(env.clone(), reason);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     /// Executes a previously scheduled admin cancellation (#406).
@@ -677,39 +783,39 @@ if config.randomness_source == RandomnessSource::External {
     /// Calling it earlier returns `CancelTimelockActive`; calling it with no
     /// pending schedule returns `CancelNotScheduled`.
     pub fn execute_admin_cancel(env: Env) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::execute_admin_cancel(env)
     }
 
     /// Returns the timestamp at which a scheduled admin cancel becomes
     /// executable, or `None` if no cancel is currently scheduled (#406).
     pub fn get_pending_cancel(env: Env) -> Option<u64> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        None
+        views::get_pending_cancel(env)
     }
 
     pub fn refund_prize(env: Env) -> Result<(), Error> {
-        claim::refund_prize(env)
+        let result = claim::refund_prize(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn emergency_withdraw(env: Env, caller: Address) -> Result<(), Error> {
-        admin::emergency_withdraw(env, caller)
+        let result = admin::emergency_withdraw(env.clone(), caller);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
-    pub fn refund_ticket(env: Env, ticket_id: u32) -> Result<i128, Error> {
-        claim::refund_ticket(env, ticket_id)
+    pub fn refund_ticket(env: Env, caller: Address, ticket_id: u32) -> Result<i128, Error> {
+        claim::refund_ticket(env, caller, ticket_id)
     }
 
     pub fn batch_refund_tickets(
         env: Env,
-        owner: Address,
+        caller: Address,
         ticket_ids: Vec<u32>,
     ) -> Result<i128, Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `claim.rs`.
-        Err(Error::InvalidParameters)
+        claim::batch_refund_tickets(env, caller, ticket_ids)
     }
 
     pub fn get_raffle(env: Env) -> Result<Raffle, Error> {
@@ -743,21 +849,28 @@ if config.randomness_source == RandomnessSource::External {
     /// O(1) read.  Falls back to an empty Vec when the address has never
     /// purchased a ticket.
     pub fn get_my_tickets(env: Env, owner: Address) -> Vec<u32> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `views.rs`.
-        Vec::new(&env)
+        views::get_my_tickets(env, owner)
     }
 
     pub fn wipe_storage(env: Env) -> Result<(), Error> {
-        admin::wipe_storage(env)
+        let result = admin::wipe_storage(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn pause(env: Env) -> Result<(), Error> {
-        admin::pause(env)
+        let result = admin::pause(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn unpause(env: Env) -> Result<(), Error> {
-        admin::unpause(env)
+        let result = admin::unpause(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -765,11 +878,17 @@ if config.randomness_source == RandomnessSource::External {
     }
 
     pub fn pause_ticket_sales(env: Env, caller: Address) -> Result<(), Error> {
-        admin::pause_ticket_sales(env, caller)
+        let result = admin::pause_ticket_sales(env.clone(), caller);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn resume_ticket_sales(env: Env, caller: Address) -> Result<(), Error> {
-        admin::resume_ticket_sales(env, caller)
+        let result = admin::resume_ticket_sales(env.clone(), caller);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn is_ticket_sales_paused(env: Env) -> bool {
@@ -780,7 +899,16 @@ if config.randomness_source == RandomnessSource::External {
         env: Env,
         owner: Address,
     ) -> Result<u32, Error> {
-        views::get_remaining_ticket_allowance(env, owner)
+        let raffle = read_raffle(&env)?;
+        let Some(cap) = effective_max_tickets_per_address(&raffle) else {
+            return Ok(u32::MAX);
+        };
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TicketCount(owner))
+            .unwrap_or(0);
+        Ok(cap.saturating_sub(current))
     }
 
     /// Quote the exact cost of buying `quantity` tickets including early-bird
@@ -804,7 +932,10 @@ if config.randomness_source == RandomnessSource::External {
         recipient: Address,
         amount: i128,
     ) -> Result<(), Error> {
-        admin::rescue_tokens(env, token, recipient, amount)
+        let result = admin::rescue_tokens(env.clone(), token, recipient, amount);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     /// Sweep residual payment-token balance to the treasury after the raffle is
@@ -813,25 +944,35 @@ if config.randomness_source == RandomnessSource::External {
     ///
     /// See also: [`docs/EVENTS.md`](../../../docs/EVENTS.md) — `DustSwept`.
     pub fn sweep_dust(env: Env) -> Result<(), Error> {
-        self::admin::sweep_dust(env)
+        let result = self::admin::sweep_dust(env.clone());
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn update_oracle_address(env: Env, new_oracle: Address) -> Result<(), Error> {
-        admin::update_oracle_address(env, new_oracle)
+        let result = admin::update_oracle_address(env.clone(), new_oracle);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn set_protocol_fee_bp(env: Env, new_fee_bp: u32) -> Result<(), Error> {
-        admin::set_protocol_fee_bp(env, new_fee_bp)
+        let result = admin::set_protocol_fee_bp(env.clone(), new_fee_bp);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn set_swap_deadline(env: Env, new_deadline_seconds: u64) -> Result<(), Error> {
-        admin::set_swap_deadline(env, new_deadline_seconds)
+        let result = admin::set_swap_deadline(env.clone(), new_deadline_seconds);
+        #[cfg(any(test, feature = "testutils"))]
+        assert_solvent_after_success(&env, &result);
+        result
     }
 
     pub fn update_metadata_hash(env: Env, new_hash: BytesN<32>) -> Result<(), Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `admin.rs`.
-        Err(Error::InvalidParameters)
+        admin::update_metadata_hash(env, new_hash)
     }
 
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
@@ -842,8 +983,8 @@ if config.randomness_source == RandomnessSource::External {
     pub fn extend_ttl(env: Env) -> Result<(), Error> {
         let _raffle = read_raffle(&env)?;
         Err(Error::InvalidParameters)
-    }
 }
+
 #[cfg(test)]
 mod test;
 #[cfg(test)]
