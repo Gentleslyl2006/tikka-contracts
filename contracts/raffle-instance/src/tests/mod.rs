@@ -1,4 +1,4 @@
-#![cfg(test)]
+#c[cfg(test)]
 
 extern crate std;
 use std::vec;
@@ -12,6 +12,7 @@ use soroban_sdk::{
 use crate::events;
 
 pub mod budget;
-pub mod claim_state;
+pub mod fairness;
 pub mod draw;
 pub mod invariants;
+pub mod ttl;

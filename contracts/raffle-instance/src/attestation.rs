@@ -121,14 +121,8 @@ pub(crate) fn get_draw_attestation(env: &Env) -> Result<DrawAttestation, Error> 
     // Compute configuration hash for verification
     let config_hash = compute_config_hash(env, &raffle);
 
-    // Retrieve metadata hash from storage (stored during init)
-    // For now, we'll use a placeholder since metadata_hash isn't stored in the Raffle struct
-    // In a real implementation, this should be stored during init
-    let metadata_hash = env
-        .storage()
-        .persistent()
-        .get::<_, BytesN<32>>(&DataKey::MetadataHash)
-        .unwrap_or(BytesN::from_array(env, &[0u8; 32]));
+    // Retrieve metadata hash from the raffle configuration
+    let metadata_hash = raffle.metadata_hash.clone();
 
     let mut winner_addresses = Vec::new(env);
     for winner in raffle.winners.iter() {

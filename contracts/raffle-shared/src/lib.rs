@@ -176,7 +176,11 @@ pub struct RecurringRaffleConfig {
 pub struct RaffleConfig {
     /// Human-readable raffle description.
     pub description: String,
-    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is true).
+    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is
+    /// true). Exclusive boundary: sales are open while
+    /// `ledger_timestamp < end_time`; the deadline is reached starting at
+    /// `ledger_timestamp == end_time`. Validated at `init` to be strictly in
+    /// the future. See `docs/GLOSSARY.md` § "End Time".
     pub end_time: u64,
     /// If true, raffle can remain open without a hard end timestamp.
     pub no_deadline: bool,
@@ -310,20 +314,36 @@ pub struct Ticket {
     pub ticket_number: u32,
     /// The address that paid for this ticket.
     pub payer: Address,
+    /// Price actually paid for this ticket (in token base units).
+    /// Records the effective price including any early-bird discount.
+    pub price_paid: i128,
 }
 
 impl Ticket {
     /// Create a ticket with the canonical invariant that the human-facing ticket
     /// number matches the monotonic storage id.
-    pub fn new(id: u32, owner: Address, purchase_time: u64) -> Self {
+    pub fn new(id: u32, owner: Address, purchase_time: u64, price_paid: i128) -> Self {
         Self {
             id,
             owner: owner.clone(),
             purchase_time,
             ticket_number: id,
             payer: owner,
+            price_paid,
         }
     }
+}
+
+/// A single drawn winner and their claim state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct Winner {
+    /// Address that owns the winning ticket at draw time.
+    pub address: Address,
+    /// True once this tier's prize has been paid out or swept.
+    pub claimed: bool,
+    /// Index into `Raffle::prizes` identifying the tier won.
+    pub tier_index: u32,
 }
 
 /// Audit data proving how a draw outcome was derived.
@@ -340,10 +360,14 @@ pub struct FairnessData {
     pub winning_ticket_indices: Vec<u32>,
     /// Unix timestamp when draw resolution occurred.
     pub draw_timestamp: u64,
-    /// Sequence counter for draws/re-draws within the raffle.
+    /// Ledger sequence number of the block in which the draw was finalized.
+    /// Recorded as `env.ledger().sequence()` at finalization so auditors can
+    /// cross-reference the draw with the canonical on-chain ledger.
     pub draw_sequence: u32,
     /// Whether unique-address winner fairness was enabled for this draw (#485).
     pub unique_winners: bool,
+    /// The quorum oracles that contributed and their submitted seeds, if applicable.
+    pub quorum_contributions: Option<Vec<(Address, u64)>>,
 }
 
 /// Generic pagination request for list queries.
@@ -402,6 +426,24 @@ pub enum AdminOp {
     ApproveOracle(Address),
     /// Remove an oracle address from the factory's approved-oracle allowlist.
     RemoveOracle(Address),
+}
+
+/// Pricing breakdown for a prospective ticket purchase.
+///
+/// Returned by `calculate_buy_quote` and surfaced via `preview_buy`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct BuyQuote {
+    /// Gross total before discount: `ticket_price × quantity`.
+    pub gross: i128,
+    /// Total early-bird discount applied.
+    pub discount: i128,
+    /// Protocol fee computed on the discounted total.
+    pub fee: i128,
+    /// Amount the buyer actually pays: `gross - discount`.
+    pub net_to_pay: i128,
+    /// Per-ticket price after discount: `net_to_pay / quantity`.
+    pub effective_ticket_price: i128,
 }
 
 // Re-export constants from the single source of truth
@@ -515,18 +557,24 @@ macro_rules! impl_require_not_paused {
     };
 }
 
+/// Unit tests for RaffleConfig defaults and resolution (#734).
 #[cfg(test)]
 mod test {
     use super::*;
     use soroban_sdk::{Env, String, Address, BytesN, Vec};
+    /// Helper to construct a canonical test configuration with explicit documented defaults.
     fn default_config(env: &Env) -> RaffleConfig {
-        let payment_token = Address::from_string(&String::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"));
+        let payment_token = Address::from_string(&String::from_str(
+            env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        ));
         RaffleConfig {
             description: String::from_str(env, "Test"),
             end_time: 0,
             no_deadline: true,
             max_tickets: 10,
             max_tickets_per_tx: 10,
+            // 0 = unlimited per-address ticket purchases in default test setup
             max_tickets_per_address: 0,
             min_tickets: 1,
             allow_multiple: true,
@@ -547,11 +595,27 @@ mod test {
             early_bird_ticket_percentage: 0,
             early_bird_discount_bp: 0,
             category: None,
+            // Default to false so an address can win multiple tiers unless unique winner mode is enabled
             unique_winners: false,
+            // Default to an empty vector; bundle pricing is optional and disabled by default
             bundles: Vec::new(env),
+            // Default to None; prize payout defaults to payment_token when prize_token is not overridden
             prize_token: None,
+            // Default to None; receipt NFT minting is opt-in and disabled by default
             nft_contract: None,
         }
+    }
+
+    #[test]
+    fn test_default_config_has_expected_defaults() {
+        let env = Env::default();
+        let config = default_config(&env);
+
+        assert_eq!(config.unique_winners, false);
+        assert!(config.bundles.is_empty());
+        assert_eq!(config.prize_token, None);
+        assert_eq!(config.nft_contract, None);
+        assert_eq!(config.max_tickets_per_address, 0);
     }
 
     #[test]

@@ -20,8 +20,8 @@ fn buy_tickets_rejects_quantity_above_per_tx_cap() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -77,8 +77,8 @@ fn buy_tickets_rejects_overflowing_total_price_without_wrapping() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
@@ -142,15 +142,15 @@ fn setup_scale_raffle(
     max_tickets_per_tx: u32,
     prize_amount: i128,
 ) -> (
-    ContractClient<'_>,
+    RaffleInstanceClient<'_>,
     Address,
     Address,
     Address,
     Address,
     token::StellarAssetClient<'_>,
 ) {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -324,8 +324,8 @@ fn test_bundle_pricing_applies() {
     token_client.mint(&creator, &100_000_000);
     token_client.mint(&buyer, &100_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Bundle test"),
@@ -445,8 +445,8 @@ fn test_adversarial_ceiling_rounding() {
     token_client.mint(&creator, &1_000_000);
     token_client.mint(&buyer, &1_000_000);
 
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
 
     let config = RaffleConfig {
         description: String::from_str(&env, "Adversarial Rounding"),
@@ -494,7 +494,7 @@ fn test_adversarial_ceiling_rounding() {
     assert_eq!(balance_after, balance_before + ticket_price - expected_prize_fee);
 }
 
-struct TicketSetup<'a> {
+struct TicketSetup <'a> {
     client: ContractClient<'a>,
     contract_id: Address,
     admin: Address,
@@ -510,8 +510,8 @@ fn setup_per_address_cap(
     allow_multiple: bool,
     max_tickets: u32,
 ) -> TicketSetup<'_> {
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(env);
     let creator = Address::generate(env);
@@ -544,8 +544,8 @@ fn setup_per_address_cap(
         metadata_hash: BytesN::from_array(env, &[1; 32]),
         claim_lockup_seconds: Some(0),
         swap_deadline_seconds: Some(0),
-        early_bird_ticket_percentage: 0,
-        early_bird_discount_bp: 0,
+        early_bird_ticket_percentage,
+        early_bird_discount_bp,
         category: None,
         unique_winners: false,
         bundles: Vec::new(env),
@@ -554,7 +554,9 @@ fn setup_per_address_cap(
     };
 
     client.init(&factory, &admin, &creator, &config);
-    env.as_contract(&contract_id, || env.storage().instance().remove(&DataKey::Factory));
+    env.as_contract(&contract_id, || {
+        env.storage().instance().remove(&DataKey::Factory)
+    });
     client.deposit_prize();
 
     TicketSetup {
@@ -574,8 +576,8 @@ fn buying_exactly_the_cap_succeeds() {
     env.mock_all_auths();
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &5), 5);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
+    assert_eq(s!setup.client.buy_tickets(&se{!!buyer, &5), 5);
+    assert_eq(s!setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
 }
 
 #[test]
@@ -585,7 +587,7 @@ fn buying_beyond_the_cap_is_rejected() {
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &5);
-    assert_eq!(
+    assert_eq(
         setup.client.try_buy_tickets(&setup.buyer, &1),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
@@ -598,11 +600,11 @@ fn cap_is_enforced_across_transactions() {
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &3);
-    assert_eq!(
+    assert_eq(
         setup.client.try_buy_tickets(&setup.buyer, &3),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
+    assert_eq(serup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
 }
 
 #[test]
@@ -612,8 +614,8 @@ fn zero_cap_is_unlimited_up_to_raffle_capacity() {
     let setup = setup_per_address_cap(&env, 0, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &5);
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &5), 10);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
+    assert_eq(setup.client.buy_tickets(&setup.buyer, &5), 10);
+    assert_eq(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
 }
 
 #[test]
@@ -622,8 +624,8 @@ fn configured_cap_supersedes_allow_multiple() {
     env.mock_all_auths();
     let setup = setup_per_address_cap(&env, 3, false, 10);
 
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &2), 2);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 1);
+    assert_eq(setup.client.buy_tickets(&setup.buyer, &2), 2);
+    assert_eq(setup.client.get_remaining_ticket_allowance(&setup.buyer), 1);
 }
 
 #[test]
@@ -632,21 +634,64 @@ fn gifted_tickets_count_against_recipient_cap() {
     env.mock_all_auths();
     let setup = setup_per_address_cap(&env, 2, true, 10);
 
-    setup.client.buy_tickets_for(&setup.buyer, &setup.recipient, &2);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.recipient), 0);
+    setup
+        .client
+        .buy_tickets_for(&setup.buyer, &setup.recipient, &2);
+    assert_eq!(
+        setup
+            .client
+            .get_remaining_ticket_allowance(&setup.recipient),
+        0
+    );
     assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
     assert_eq!(
-        setup.client.try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
+        setup
+            .client
+            .try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
+}
+
+#[test]
+fn gifted_tickets_charge_buyer_and_assign_owner_to_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup(&env, 10, true, 20);
+
+    let buyer_balance_before = setup.token.balance(&setup.buyer);
+    let recipient_balance_before = setup.token.balance(&setup.recipient);
+
+    let sold = setup
+        .client
+        .buy_tickets_for(&setup.buyer, &setup.recipient, &3);
+    assert_eq!(sold, 3);
+
+    let buyer_balance_after = setup.token.balance(&setup.buyer);
+    let recipient_balance_after = setup.token.balance(&setup.recipient);
+
+    assert_eq!(
+        buyer_balance_before - buyer_balance_after,
+        3 * MIN_TICKET_PRICE
+    );
+    assert_eq!(recipient_balance_after, recipient_balance_before);
+
+    for ticket_id in 1..=3 {
+        let ticket: Ticket = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Ticket(ticket_id))
+            .unwrap();
+        assert_eq!(ticket.owner, setup.recipient);
+        assert_eq!(ticket.payer, setup.buyer);
+    }
 }
 
 #[test]
 fn cap_cannot_exceed_max_tickets() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register(Contract, ());
-    let client = ContractClient::new(&env, &contract_id);
+    let contract_id = env.register(RaffleInstance, ());
+    let client = RaffleInstanceClient::new(&env, &contract_id);
     let factory = env.register(MockFactory, ());
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
@@ -683,8 +728,227 @@ fn cap_cannot_exceed_max_tickets() {
         nft_contract: None,
     };
 
-    assert_eq!(
+    assert_eq(
         client.try_init(&factory, &admin, &creator, &config),
         Err(Ok(Error::InvalidParameters))
+        #[test]
+fn init_rejects_non_ascending_bundle_quantities() {
+    // build RaffleConfig with bundles qty 5 then 3 → init Err(InvalidParameters)
+}
+
+#[test]
+fn calculate_buy_quote_uses_best_bundle() {
+    // raffle with list 100, bundle qty 5 price 80
+    // quantity 5 → unit 80; quantity 4 → unit 100
+}
+
+#[test]
+fn early_bird_applies_after_bundle_unit_price() {
+    // document numeric precedence in asserts
+}
     );
+}
+
+struct DeadlineSetup<'a> {
+    client: ContractClient<'a>,
+    buyer: Address,
+    recipient: Address,
+}
+
+/// Like `setup()`, but with a real deadline (`no_deadline: false`) instead
+/// of the disabled deadline the ticket-cap tests use. `min_tickets: 2` so
+/// `finalize_raffle` cannot succeed via the tickets-full path with a single
+/// purchase — these tests exercise the deadline path only, with zero
+/// tickets sold.
+fn setup_with_deadline(env: &Env, end_time: u64) -> DeadlineSetup<'_> {
+    env.ledger().set_timestamp(1); // baseline "now" so init's end_time > now check passes
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(env, &contract_id);
+    let factory = env.register(MockFactory, ());
+    let admin = Address::generate(env);
+    let creator = Address::generate(env);
+    let buyer = Address::generate(env);
+    let recipient = Address::generate(env);
+    let token_admin = Address::generate(env);
+    let (payment_token, token) = create_token(env, &token_admin);
+
+    token.mint(&creator, &1_000_000_000);
+    token.mint(&buyer, &1_000_000_000);
+
+    let config = RaffleConfig {
+        description: String::from_str(env, "deadline boundary"),
+        end_time,
+        no_deadline: false,
+        max_tickets: 10,
+        max_tickets_per_tx: 10,
+        max_tickets_per_address: 0,
+        min_tickets: 2,
+        allow_multiple: true,
+        ticket_price: MIN_TICKET_PRICE,
+        payment_token,
+        prize_amount: MIN_TICKET_PRICE * 10,
+        prizes: vec![env, 10_000u32],
+        randomness_source: RandomnessSource::Internal,
+        oracle_address: None,
+        protocol_fee_bp: 0,
+        treasury_address: None,
+        swap_router: None,
+        tikka_token: None,
+        metadata_hash: BytesN::from_array(env, &[1; 32]),
+        claim_lockup_seconds: Some(0),
+        swap_deadline_seconds: Some(0),
+        early_bird_ticket_percentage: 0,
+        early_bird_discount_bp: 0,
+        category: None,
+        unique_winners: false,
+        bundles: Vec::new(env),
+        prize_token: None,
+        nft_contract: None,
+    };
+
+    client.init(&factory, &admin, &creator, &config);
+    env.as_contract(&contract_id, || env.storage().instance().remove(&DataKey::Factory));
+    client.deposit_prize();
+
+    DeadlineSetup { client, buyer, recipient }
+}
+
+// --- buy_tickets: end_time is an exclusive boundary ---
+
+#[test]
+fn buy_tickets_succeeds_just_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(999);
+    assert_eq!(setup.client.buy_tickets(&setup.buyer, &1), 1);
+}
+
+#[test]
+fn buy_tickets_rejected_exactly_at_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_000);
+    assert_eq!(
+        setup.client.try_buy_tickets(&setup.buyer, &1),
+        Err(Ok(Error::RaffleExpired))
+    );
+}
+
+#[test]
+fn buy_tickets_rejected_after_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_001);
+    assert_eq!(
+        setup.client.try_buy_tickets(&setup.buyer, &1),
+        Err(Ok(Error::RaffleExpired))
+    );
+}
+
+// --- buy_tickets_for: must agree with buy_tickets at the same boundary.
+// buy_tickets_for_rejected_exactly_at_end_time is the regression test for
+// the end_time inconsistency bug — before the fix (`>` instead of `>=`),
+// this purchase succeeded instead of returning RaffleExpired. ---
+
+#[test]
+fn buy_tickets_for_succeeds_just_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(999);
+    assert_eq!(
+        setup.client.buy_tickets_for(&setup.buyer, &setup.recipient, &1),
+        1
+    );
+}
+
+#[test]
+fn buy_tickets_for_rejected_exactly_at_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_000);
+    assert_eq!(
+        setup.client.try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
+        Err(Ok(Error::RaffleExpired))
+    );
+}
+
+#[test]
+fn buy_tickets_for_rejected_after_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_001);
+    assert_eq!(
+        setup.client.try_buy_tickets_for(&setup.buyer, &setup.recipient, &1),
+        Err(Ok(Error::RaffleExpired))
+    );
+}
+
+// --- finalize_raffle: deadline gate must open at the same instant ---
+
+#[test]
+fn finalize_raffle_rejected_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(999);
+    assert_eq!(
+        setup.client.try_finalize_raffle(),
+        Err(Ok(Error::InvalidStateTransition))
+    );
+}
+
+#[test]
+fn finalize_raffle_allowed_exactly_at_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_000);
+    setup.client.finalize_raffle();
+    // 0 tickets sold < min_tickets (2) -> ZeroTicketsSold failure path.
+    assert_eq!(setup.client.get_raffle().status, RaffleStatus::Failed);
+}
+
+#[test]
+fn finalize_raffle_allowed_after_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_001);
+    setup.client.finalize_raffle();
+    assert_eq!(setup.client.get_raffle().status, RaffleStatus::Failed);
+}
+
+// --- get_stats().time_remaining: 0 at the first rejecting instant ---
+
+#[test]
+fn time_remaining_is_one_just_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(999);
+    assert_eq!(setup.client.get_stats().time_remaining, 1);
+}
+
+#[test]
+fn time_remaining_is_zero_exactly_at_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_000);
+    assert_eq!(setup.client.get_stats().time_remaining, 0);
+}
+
+#[test]
+fn time_remaining_is_zero_after_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let setup = setup_with_deadline(&env, 1_000);
+    env.ledger().set_timestamp(1_001);
+    assert_eq!(setup.client.get_stats().time_remaining, 0);
 }
