@@ -274,6 +274,7 @@ pub enum Error {
     ExceedsMaxTicketsPerAddress = 67,
     OracleNotRegistered = 68,
     DuplicateOracleSubmission = 69,
+    CommitAlreadySubmitted = 70,
 }
 
 #[contractimpl]
