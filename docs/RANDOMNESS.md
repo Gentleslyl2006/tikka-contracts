@@ -8,14 +8,13 @@ This document outlines the cryptographic design, trust model, and security consi
 
 ### How the seed is built
 
-Primary helper: `build_internal_seed` / `PrngWinnerSelection` in `randomness.rs`, and `build_internal_seed_u64` used by the finalize path in `lib.rs` / `draw.rs`.
+Primary helper: `build_internal_seed_u64` in `contracts/raffle-instance/src/helpers.rs`; Internal draws in `draw.rs` pass that seed into `do_finalize_with_seed`.
 
-Entropy mixed into the 32-byte path:
+The internal seed hashes this XDR-packed tuple and takes the first 8 bytes as a `u64`:
 
-1. Ledger timestamp  
-1. Ledger sequence  
-1. Network id (SHA-256 of network passphrase)  
-1. Raffle contract address  
+1. Ledger timestamp
+1. Ledger sequence
+1. Current raffle contract address
 
 Values are XDR-packed and hashed with `env.crypto().sha256`, then fed to `env.prng().seed(...)`. Winner indices are selected via a **partial Fisher–Yates shuffle**: exactly `k` deterministic draws from the PRNG, using swap tracking to guarantee uniqueness without retries or modulo bias. This replaces the previous rejection-sampling loop which had an unbounded retry probability as `k` approached `n`.
 
@@ -474,10 +473,6 @@ No single oracle can force the final seed to be a specific desired value. Becaus
 - Submit their honest seed and accept the resulting winner.
 - Abort/withhold the transaction, preventing the draw from finishing.
 
-<<<<<<< HEAD
-#### 2. Decentralized & Reputation-Bound Operators
-Oracles are run by reputable, independent node operators. Collusion between $k$ operators is required to predict or manipulate the final seed. The threshold $k$ should be chosen such that $k > n/2$ (a simple majority) to ensure that a minority of colluding operators cannot reconstruct or manipulate the randomness.
-=======
 ### Timeout / fallback
 
 No oracle timeout. Fallback is immediate at finalize when `commits_found == 0`.
@@ -583,7 +578,7 @@ Also consider:
 | Internal | Biased finalize timing | None (inherent) |
 | External | Oracle silent | After 200 ledgers: refund cancel **or** Internal fallback |
 | External | Wrong `request_id` / bad proof | Tx rejects (`InvalidParameters` / crypto fail) |
-| CommitReveal | No commits | Internal PRNG fallback |
+| CommitReveal | No commits | Internal u64 seed fallback |
 | Any | `tickets_sold < min_tickets` or zero sold | `Failed` + `RaffleFailed` (no draw) |
 | Any | Concurrent finalize | `DrawingLock` → `DrawingAlreadyInProgress` |
 
@@ -863,7 +858,6 @@ fn audit_raffle_draw(env: &Env, raffle_contract: &Address) -> Result<AuditReport
 | Winner selection algorithm | `contracts/raffle-instance/src/randomness.rs` → `OracleSeedWinnerSelection` |
 | Fairness metadata storage | `contracts/raffle-instance/src/helpers.rs` → `do_finalize_with_seed` |
 | VRF proof verification | `contracts/raffle-instance/src/draw.rs` → `provide_randomness` |
->>>>>>> 9b786c5 (fix: implement resolve_unique_winner and fix brace imbalance (#745))
 
 #### 3. Timeouts and Default Fallbacks
 To prevent a malicious or lazy $k$-th oracle from holding the raffle hostage indefinitely, the contract implements:
