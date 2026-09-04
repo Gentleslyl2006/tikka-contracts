@@ -85,6 +85,7 @@ pub fn setup(
             .remove(&tikka_raffle_instance::DataKey::Factory);
     });
     client.deposit_prize();
+    assert_solvent(env, &client);
     (client, creator, admin, token)
 }
 
@@ -96,6 +97,7 @@ pub fn buy(data: &[u8]) {
     token.mint(&buyer, &1_000_000);
     let quantity = (data.first().copied().unwrap_or(1) as u32 % 5) + 1;
     let _ = client.try_buy_tickets(&buyer, &quantity);
+    assert_solvent(&env, &client);
 }
 
 pub fn finalize(data: &[u8]) {
@@ -104,6 +106,7 @@ pub fn finalize(data: &[u8]) {
     let (client, creator, _admin, token) = setup(&env, 1);
     token.mint(&creator, &10_000);
     let _ = client.try_finalize_raffle();
+    assert_solvent(&env, &client);
     let _ = data;
 }
 
@@ -182,8 +185,10 @@ pub fn commit_reveal(data: &[u8]) {
     let buyer = Address::generate(&env);
     token.mint(&buyer, &100_000);
     let _ = client.try_buy_tickets(&buyer, &1);
+    assert_solvent(&env, &client);
     let hash = BytesN::from_array(&env, &[data.first().copied().unwrap_or(0); 32]);
     let _ = client.try_submit_commit(&1, &hash);
+    assert_solvent(&env, &client);
 }
 
 pub fn lifecycle(data: &[u8]) {
@@ -224,6 +229,8 @@ pub fn lifecycle(data: &[u8]) {
                 }
             }
         }
+
+        assert_solvent(&env, &client);
 
         if let Ok(Ok(raffle)) = client.try_get_raffle() {
             assert!(raffle.tickets_sold <= raffle.max_tickets);
