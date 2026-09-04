@@ -53,7 +53,7 @@ use crate::{
 /// | `end_time` | Must be in the future unless `no_deadline = true`; `no_deadline` requires `end_time == 0` |
 /// | `max_tickets` | `1 ≤ max_tickets ≤ MAX_TICKETS_LIMIT` (100 000) |
 /// | `max_tickets_per_tx` | `1 ≤ max_tickets_per_tx ≤ max_tickets` |
-/// | `max_tickets_per_address` | Not currently validated or enforced |
+/// | `max_tickets_per_address` | `≤ max_tickets`; `0` = unlimited. Enforced per-address at purchase time (both `buy_tickets` and `buy_tickets_for`) via `Error::ExceedsMaxTicketsPerAddress` |
 /// | `min_tickets` | `min_tickets ≤ max_tickets` |
 /// | `ticket_price` | `≥ MIN_TICKET_PRICE` (10 000 stroops) |
 /// | `prize_amount` | `ticket_price ≤ prize_amount ≤ MAX_PRIZE_AMOUNT` |
@@ -96,7 +96,7 @@ pub(crate) fn init(
     factory: Address,
     admin: Address,
     creator: Address,
-    config: RaffleConfig,
+    mut config: RaffleConfig,
 ) -> Result<(), Error> {
     if env.storage().instance().has(&DataKey::Raffle) {
         return Err(Error::AlreadyInitialized);
@@ -125,8 +125,39 @@ pub(crate) fn init(
     if config.max_tickets_per_tx == 0 || config.max_tickets_per_tx > config.max_tickets {
         return Err(Error::InvalidParameters);
     }
+    if config.max_tickets_per_address == 0 && !config.allow_multiple {
+        config.max_tickets_per_address = 1;
+    }
+    if config.max_tickets_per_address > config.max_tickets {
+        return Err(Error::InvalidParameters);
+    }
     if config.ticket_price < MIN_TICKET_PRICE {
         return Err(Error::InvalidParameters);
+    }
+    // --- Ticket bundles (#783) ---
+    const MAX_BUNDLES: u32 = 16;
+    if config.bundles.len() > MAX_BUNDLES {
+        return Err(Error::InvalidParameters);
+    }
+    let mut prev_qty: u32 = 0;
+    for i in 0..config.bundles.len() {
+        let b = config.bundles.get(i).unwrap();
+    if b.quantity == 0 {
+            return Err(Error::InvalidParameters);
+        }
+        if b.price_per_ticket < MIN_TICKET_PRICE {
+            return Err(Error::InvalidParameters);
+        }
+    if i > 0 && b.quantity <= prev_qty {
+            return Err(Error::InvalidParameters);
+        }
+    if i > 0 {
+            let prev = config.bundles.get(i - 1).unwrap();
+    if b.price_per_ticket > prev.price_per_ticket {
+                return Err(Error::InvalidParameters);
+            }
+        }
+        prev_qty = b.quantity;
     }
     if config.prize_amount < config.ticket_price {
         return Err(Error::InvalidParameters);
@@ -187,6 +218,7 @@ pub(crate) fn init(
         max_tickets_per_tx: config.max_tickets_per_tx,
         min_tickets: config.min_tickets,
         allow_multiple: config.allow_multiple,
+        max_tickets_per_address: config.max_tickets_per_address,
         ticket_price: config.ticket_price,
         payment_token: config.payment_token.clone(),
         prize_token: config.payment_token.clone(),

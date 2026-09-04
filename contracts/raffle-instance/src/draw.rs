@@ -12,7 +12,7 @@ use crate::helpers::{
     do_finalize_with_seed, read_raffle, request_randomness,
     revert_status, transition_status, transition_to_drawing, write_raffle,
 };
-use crate::randomness::{build_internal_seed_u64, build_vrf_proof_message};
+use crate::randomness::{build_vrf_proof_message, derive_random_seed_from_proof};
 use crate::{CommitRevealEntry, DataKey, Error, RaffleStatus, ORACLE_TIMEOUT_LEDGERS};
 
 pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
@@ -32,6 +32,11 @@ pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
     }
 
     let now = env.ledger().timestamp();
+    // end_time is an exclusive boundary: sales/finalization are gated on
+    // now < end_time, so the deadline is reached starting at now == end_time.
+    // Must stay in sync with the RaffleExpired checks in tickets.rs
+    // (buy_tickets, buy_tickets_for) and time_remaining in
+    // views.rs::get_stats. See docs/GLOSSARY.md § "End Time".
     let time_ended = !raffle.no_deadline && now >= raffle.end_time;
     let tickets_full = raffle.tickets_sold >= raffle.max_tickets;
 
@@ -85,7 +90,7 @@ pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
 
                 // Initialise empty quorum submission tracker
                 env.storage()
-                    .instance()
+                    .persistent()
                     .set(&DataKey::QuorumSubmittedOracles, &Vec::<Address>::new(&env));
 
                 return Ok(());
@@ -218,7 +223,12 @@ pub(crate) fn provide_randomness(
         return Err(Error::InvalidParameters);
     }
 
-    let message = build_vrf_proof_message(&env, request_id, random_seed);
+    let derived_seed = derive_random_seed_from_proof(&env, &proof);
+    if derived_seed != random_seed {
+        return Err(Error::InvalidParameters);
+    }
+
+    let message = build_vrf_proof_message(&env, request_id);
     env.crypto().ed25519_verify(&public_key, &message, &proof);
 
     RandomnessReceived {

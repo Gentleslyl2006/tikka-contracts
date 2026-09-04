@@ -25,11 +25,11 @@ describe('KeyService', () => {
   const keypair = Keypair.random();
 
   beforeEach(() => {
-    process.env.ORACLE_SECRET_KEY = keypair.secret();
+    process.env['ORACLE_SECRET_KEY'] = keypair.secret();
   });
 
   afterEach(() => {
-    delete process.env.ORACLE_SECRET_KEY;
+    delete process.env['ORACLE_SECRET_KEY'];
   });
 
   it('loads and validates the key on startup', async () => {
@@ -39,7 +39,7 @@ describe('KeyService', () => {
   });
 
   it('fails startup when the secret is missing', async () => {
-    delete process.env.ORACLE_SECRET_KEY;
+    delete process.env['ORACLE_SECRET_KEY'];
     const service = new KeyService();
     await expect(service.initialize()).rejects.toThrow('KeyService initialization failed.');
   });
