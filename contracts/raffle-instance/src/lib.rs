@@ -133,6 +133,7 @@ pub struct FairnessMetadata {
     pub draw_timestamp: u64,
     pub draw_sequence: u32,
     pub unique_winners: bool,
+    pub quorum_contributions: Option<Vec<(Address, u64)>>,
 }
 
 #[soroban_sdk::contracttype]
@@ -710,7 +711,7 @@ if config.randomness_source == RandomnessSource::External {
             }
 
             let aggregate = randomness::aggregate_quorum_seeds(&env, &seeds);
-            helpers::do_finalize_with_seed(&env, raffle, aggregate, RandomnessType::Vrf)?;
+            helpers::do_finalize_with_seed(&env, raffle, aggregate, RandomnessType::Quorum, Some(seeds))?;
         }
 
         #[cfg(any(test, feature = "testutils"))]

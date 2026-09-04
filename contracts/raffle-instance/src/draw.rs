@@ -162,12 +162,12 @@ pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
             let mut seed_bytes = [0u8; 8];
             seed_bytes.copy_from_slice(&arr[..8]);
             let seed = u64::from_be_bytes(seed_bytes);
-            return do_finalize_with_seed(&env, raffle, seed, RandomnessType::Prng);
+            return do_finalize_with_seed(&env, raffle, seed, RandomnessType::Prng, None);
         }
     }
 
     let seed = build_internal_seed_u64(&env);
-    do_finalize_with_seed(&env, raffle, seed, RandomnessType::Prng)
+    do_finalize_with_seed(&env, raffle, seed, RandomnessType::Prng, None)
 }
 
 /// Handle a single-oracle VRF randomness submission (existing External mode).
@@ -238,7 +238,7 @@ pub(crate) fn provide_randomness(
         timestamp: env.ledger().timestamp(),
     }
     .publish(&env);
-    do_finalize_with_seed(&env, raffle, random_seed, RandomnessType::Vrf)?;
+    do_finalize_with_seed(&env, raffle, random_seed, RandomnessType::Vrf, None)?;
     Ok(env.current_contract_address())
 }
 
@@ -327,6 +327,6 @@ pub(crate) fn trigger_randomness_fallback(
     }
     .publish(&env);
 
-    do_finalize_with_seed(&env, raffle, seed, RandomnessType::Fallback)
+    do_finalize_with_seed(&env, raffle, seed, RandomnessType::Fallback, None)
 }
 
