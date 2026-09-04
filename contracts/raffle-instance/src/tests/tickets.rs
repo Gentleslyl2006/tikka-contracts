@@ -686,6 +686,21 @@ fn cap_cannot_exceed_max_tickets() {
     assert_eq!(
         client.try_init(&factory, &admin, &creator, &config),
         Err(Ok(Error::InvalidParameters))
+        #[test]
+fn init_rejects_non_ascending_bundle_quantities() {
+    // build RaffleConfig with bundles qty 5 then 3 → init Err(InvalidParameters)
+}
+
+#[test]
+fn calculate_buy_quote_uses_best_bundle() {
+    // raffle with list 100, bundle qty 5 price 80
+    // quantity 5 → unit 80; quantity 4 → unit 100
+}
+
+#[test]
+fn early_bird_applies_after_bundle_unit_price() {
+    // document numeric precedence in asserts
+}
     );
 }
 

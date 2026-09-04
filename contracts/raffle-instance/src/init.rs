@@ -128,6 +128,31 @@ pub(crate) fn init(
     if config.ticket_price < MIN_TICKET_PRICE {
         return Err(Error::InvalidParameters);
     }
+    // --- Ticket bundles (#783) ---
+    const MAX_BUNDLES: u32 = 16;
+    if config.bundles.len() > MAX_BUNDLES {
+        return Err(Error::InvalidParameters);
+    }
+    let mut prev_qty: u32 = 0;
+    for i in 0..config.bundles.len() {
+        let b = config.bundles.get(i).unwrap();
+    if b.quantity == 0 {
+            return Err(Error::InvalidParameters);
+        }
+        if b.price_per_ticket < MIN_TICKET_PRICE {
+            return Err(Error::InvalidParameters);
+        }
+    if i > 0 && b.quantity <= prev_qty {
+            return Err(Error::InvalidParameters);
+        }
+    if i > 0 {
+            let prev = config.bundles.get(i - 1).unwrap();
+    if b.price_per_ticket > prev.price_per_ticket {
+                return Err(Error::InvalidParameters);
+            }
+        }
+        prev_qty = b.quantity;
+    }
     if config.prize_amount < config.ticket_price {
         return Err(Error::InvalidParameters);
     }

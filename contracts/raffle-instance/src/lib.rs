@@ -121,6 +121,8 @@ pub struct Raffle {
     pub early_bird_discount_bp: u32,
     pub metadata_hash: BytesN<32>,
     pub unique_winners: bool,
+    /// Tiered bundle pricing from config (validated at init).
+    pub bundles: soroban_sdk::Vec<raffle_shared::TicketBundle>,
     pub nft_contract: Option<Address>,
 }
 
@@ -478,7 +480,8 @@ if config.randomness_source == RandomnessSource::External {
             early_bird_discount_bp: config.early_bird_discount_bp,
             metadata_hash: config.metadata_hash.clone(),
             unique_winners: config.unique_winners,
-            nft_contract: config.nft_contract,
+            bundles: config.bundles.clone(),
+            nft_contract: config.nft_contract.clone(),
         };
         write_raffle(&env, &raffle);
         env.storage().instance().set(&DataKey::Factory, &factory);
