@@ -1,15 +1,32 @@
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { Alerter } from '../alert/alerter';
 import { TxSubmitterService } from './tx-submitter.service';
 import { KeyService } from '../keys/key.service';
 import { buildVrfProofMessage } from '../vrf/proof-message';
+
+jest.mock('@stellar/stellar-sdk', () => {
+  const original = jest.requireActual('@stellar/stellar-sdk');
+  const mock = Object.create(original);
+
+  const mockRpc = Object.create(original.rpc);
+  Object.defineProperty(mockRpc, 'assembleTransaction', {
+    value: jest.fn().mockImplementation((tx: any) => ({
+      build: () => tx,
+    })),
+    writable: true,
+    configurable: true,
+  });
+  mock.rpc = mockRpc;
+
+  return mock;
+});
 
 /**
  * Integration test — skipped unless STELLAR_INTEGRATION_TEST=1 and env vars are set.
  * Run against testnet with a funded oracle account and deployed raffle contract.
  */
 describe('TxSubmitterService integration', () => {
-  const runIntegration = process.env.STELLAR_INTEGRATION_TEST === '1';
+  const runIntegration = process.env['STELLAR_INTEGRATION_TEST'] === '1';
 
   (runIntegration ? it : it.skip)(
     'submits provide_randomness to testnet contract',
@@ -17,13 +34,13 @@ describe('TxSubmitterService integration', () => {
       const keyService = new KeyService();
       await keyService.initialize();
 
-      const raffleContract = process.env.RAFFLE_CONTRACT_ADDRESS;
-      const requestId = process.env.RANDOMNESS_REQUEST_ID;
+      const raffleContract = process.env['RAFFLE_CONTRACT_ADDRESS'];
+      const requestId = process.env['RANDOMNESS_REQUEST_ID'];
       if (!raffleContract || !requestId) {
         throw new Error('RAFFLE_CONTRACT_ADDRESS and RANDOMNESS_REQUEST_ID required');
       }
 
-      const randomSeed = BigInt(process.env.RANDOMNESS_SEED ?? '42');
+      const randomSeed = BigInt(process.env['RANDOMNESS_SEED'] ?? '42');
       const message = buildVrfProofMessage(raffleContract, BigInt(requestId), randomSeed);
       const proof = keyService.sign(message);
       const publicKey = keyService.getPublicKeyBytes();
@@ -51,7 +68,7 @@ describe('TxSubmitterService alerting', () => {
     fetchImpl?: jest.Mock;
   }) {
     const keyService = new KeyService({
-      getSecret: async () => Keypair.random().secret(),
+      getSecret: async () => Buffer.from(Keypair.random().secret()),
     });
     await keyService.initialize();
 
@@ -142,5 +159,38 @@ describe('TxSubmitterService alerting', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('submits provide_quorum_randomness successfully', async () => {
+    const { submitter } = await buildSubmitter({ failureThreshold: 1 });
+    const mockServer = {
+      getAccount: jest.fn().mockImplementation((pubKey) => Promise.resolve({
+        accountId: () => pubKey,
+        sequenceNumber: () => '1',
+      })),
+      simulateTransaction: jest.fn().mockResolvedValue({
+        transactionData: 'AAAAAgAAAABlM+QrJVf1z50IqnH57Ck35g==',
+        minResourceFee: '100000',
+      }),
+      sendTransaction: jest.fn().mockResolvedValue({
+        status: 'PENDING',
+        hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      }),
+      getTransaction: jest.fn().mockResolvedValue({
+        status: 'SUCCESS',
+      }),
+    };
+    (submitter as any).server = mockServer;
+
+    const hash = await submitter.submitProvideQuorumRandomness({
+      raffleContract: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+      randomSeed: 99n,
+      requestId: 42n,
+    });
+
+    expect(hash).toBe('1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef');
+    expect(mockServer.getAccount).toHaveBeenCalled();
+    expect(mockServer.simulateTransaction).toHaveBeenCalled();
+    expect(mockServer.sendTransaction).toHaveBeenCalled();
   });
 });
