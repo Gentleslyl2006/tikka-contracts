@@ -12,7 +12,7 @@ use crate::helpers::{
     build_internal_seed_u64, do_finalize_with_seed, read_raffle, request_randomness,
     revert_status, transition_status, transition_to_drawing, write_raffle,
 };
-use crate::randomness::build_vrf_proof_message;
+use crate::randomness::{build_vrf_proof_message, derive_random_seed_from_proof};
 use crate::{CommitRevealEntry, DataKey, Error, RaffleStatus, ORACLE_TIMEOUT_LEDGERS};
 
 pub(crate) fn finalize_raffle(env: Env) -> Result<(), Error> {
@@ -223,7 +223,12 @@ pub(crate) fn provide_randomness(
         return Err(Error::InvalidParameters);
     }
 
-    let message = build_vrf_proof_message(&env, request_id, random_seed);
+    let derived_seed = derive_random_seed_from_proof(&env, &proof);
+    if derived_seed != random_seed {
+        return Err(Error::InvalidParameters);
+    }
+
+    let message = build_vrf_proof_message(&env, request_id);
     env.crypto().ed25519_verify(&public_key, &message, &proof);
 
     RandomnessReceived {
