@@ -71,11 +71,11 @@ export class TxSubmitterService {
     this.sleepImpl = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  async submitProvideRandomness(params: ProvideRandomnessParams): Promise<string> {
+  async submitProvideRandomness(params: ProvideRandomnessParams): Promise<SubmitResult> {
     let lastError: Error | undefined;
     let retried = false;
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < this.retryPolicy.maxAttempts; attempt++) {
       try {
         const hash = await this.submitOnce(params);
         this.consecutiveFailures = 0;
@@ -87,7 +87,7 @@ export class TxSubmitterService {
         return hash;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        const message = lastError.message;
+        const decision = this.retryPolicy.classify(lastError);
 
         this.recordFailure(message);
 
@@ -253,7 +253,7 @@ export class TxSubmitterService {
       networkPassphrase: this.networkPassphrase,
     })
       .addOperation(operation)
-      .setTimeout(300)
+      .setTimeout(timeout)
       .build();
 
     const simulated = await this.server.simulateTransaction(tx);
