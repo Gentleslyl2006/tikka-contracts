@@ -73,7 +73,17 @@ pub struct RaffleInstance;
 pub struct Raffle {
     pub creator: Address,
     pub description: String,
+    /// Unix timestamp after which ticket sales close and `finalize_raffle`
+    /// may transition the raffle out of `Active`. The boundary is exclusive:
+    /// sales are open while `ledger_timestamp < end_time`, and the deadline
+    /// is reached starting at `ledger_timestamp == end_time` (enforced
+    /// identically by `buy_tickets`, `buy_tickets_for`, and
+    /// `finalize_raffle`; see `docs/GLOSSARY.md` § "End Time"). Ignored when
+    /// `no_deadline` is `true`.
     pub end_time: u64,
+    /// If true, `end_time` is not enforced and the raffle can remain
+    /// `Active` indefinitely until `max_tickets` sells out or the raffle is
+    /// cancelled.
     pub no_deadline: bool,
     pub max_tickets: u32,
     pub max_tickets_per_tx: u32,

@@ -176,7 +176,11 @@ pub struct RecurringRaffleConfig {
 pub struct RaffleConfig {
     /// Human-readable raffle description.
     pub description: String,
-    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is true).
+    /// Unix timestamp when ticket sales close (ignored when `no_deadline` is
+    /// true). Exclusive boundary: sales are open while
+    /// `ledger_timestamp < end_time`; the deadline is reached starting at
+    /// `ledger_timestamp == end_time`. Validated at `init` to be strictly in
+    /// the future. See `docs/GLOSSARY.md` § "End Time".
     pub end_time: u64,
     /// If true, raffle can remain open without a hard end timestamp.
     pub no_deadline: bool,
