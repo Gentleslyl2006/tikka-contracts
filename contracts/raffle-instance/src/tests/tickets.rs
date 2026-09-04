@@ -494,7 +494,7 @@ fn test_adversarial_ceiling_rounding() {
     assert_eq!(balance_after, balance_before + ticket_price - expected_prize_fee);
 }
 
-struct TicketSetup<'a> {
+struct TicketSetup <'a> {
     client: ContractClient<'a>,
     contract_id: Address,
     admin: Address,
@@ -544,8 +544,8 @@ fn setup_per_address_cap(
         metadata_hash: BytesN::from_array(env, &[1; 32]),
         claim_lockup_seconds: Some(0),
         swap_deadline_seconds: Some(0),
-        early_bird_ticket_percentage: 0,
-        early_bird_discount_bp: 0,
+        early_bird_ticket_percentage,
+        early_bird_discount_bp,
         category: None,
         unique_winners: false,
         bundles: Vec::new(env),
@@ -576,8 +576,8 @@ fn buying_exactly_the_cap_succeeds() {
     env.mock_all_auths();
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &5), 5);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
+    assert_eq(s!setup.client.buy_tickets(&se{!!buyer, &5), 5);
+    assert_eq(s!setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
 }
 
 #[test]
@@ -587,7 +587,7 @@ fn buying_beyond_the_cap_is_rejected() {
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &5);
-    assert_eq!(
+    assert_eq(
         setup.client.try_buy_tickets(&setup.buyer, &1),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
@@ -600,11 +600,11 @@ fn cap_is_enforced_across_transactions() {
     let setup = setup_per_address_cap(&env, 5, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &3);
-    assert_eq!(
+    assert_eq(
         setup.client.try_buy_tickets(&setup.buyer, &3),
         Err(Ok(Error::ExceedsMaxTicketsPerAddress))
     );
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
+    assert_eq(serup.client.get_remaining_ticket_allowance(&setup.buyer), 2);
 }
 
 #[test]
@@ -614,8 +614,8 @@ fn zero_cap_is_unlimited_up_to_raffle_capacity() {
     let setup = setup_per_address_cap(&env, 0, true, 10);
 
     setup.client.buy_tickets(&setup.buyer, &5);
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &5), 10);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
+    assert_eq(setup.client.buy_tickets(&setup.buyer, &5), 10);
+    assert_eq(setup.client.get_remaining_ticket_allowance(&setup.buyer), 0);
 }
 
 #[test]
@@ -624,8 +624,8 @@ fn configured_cap_supersedes_allow_multiple() {
     env.mock_all_auths();
     let setup = setup_per_address_cap(&env, 3, false, 10);
 
-    assert_eq!(setup.client.buy_tickets(&setup.buyer, &2), 2);
-    assert_eq!(setup.client.get_remaining_ticket_allowance(&setup.buyer), 1);
+    assert_eq(setup.client.buy_tickets(&setup.buyer, &2), 2);
+    assert_eq(setup.client.get_remaining_ticket_allowance(&setup.buyer), 1);
 }
 
 #[test]
@@ -728,7 +728,7 @@ fn cap_cannot_exceed_max_tickets() {
         nft_contract: None,
     };
 
-    assert_eq!(
+    assert_eq(
         client.try_init(&factory, &admin, &creator, &config),
         Err(Ok(Error::InvalidParameters))
         #[test]
