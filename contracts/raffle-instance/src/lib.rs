@@ -277,6 +277,42 @@ pub enum Error {
     CommitAlreadySubmitted = 70,
 }
 
+/// Returns the effective per-address ticket cap, if any.
+///
+/// `max_tickets_per_address` supersedes `allow_multiple`; when unset (0),
+/// `allow_multiple = false` still restricts each address to one ticket.
+fn effective_max_tickets_per_address(raffle: &Raffle) -> Option<u32> {
+    if raffle.max_tickets_per_address > 0 {
+        Some(raffle.max_tickets_per_address)
+    } else if !raffle.allow_multiple {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn enforce_max_tickets_per_address(
+    env: &Env,
+    raffle: &Raffle,
+    address: &Address,
+    quantity: u32,
+) -> Result<(), Error> {
+    if let Some(cap) = effective_max_tickets_per_address(raffle) {
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TicketCount(address.clone()))
+            .unwrap_or(0);
+        let Some(total) = current.checked_add(quantity) else {
+            return Err(Error::ExceedsMaxTicketsPerAddress);
+        };
+        if total > cap {
+            return Err(Error::ExceedsMaxTicketsPerAddress);
+        }
+    }
+    Ok(())
+}
+
 #[contractimpl]
 impl RaffleInstance {
     pub fn init(
@@ -413,7 +449,13 @@ if config.randomness_source == RandomnessSource::External {
         let prize_token = config.payment_token.clone();
 
         // Resolve default values for fields that use 0 as "use default"
-        let config = config.resolve_defaults();
+        let mut config = config.resolve_defaults();
+
+        // `allow_multiple = false` is the legacy spelling of a one-ticket cap.
+        // The explicit `max_tickets_per_address` cap supersedes it when set.
+        if !config.allow_multiple && config.max_tickets_per_address == 0 {
+            config.max_tickets_per_address = 1;
+        }
 
         // #259: claim_lockup_seconds must be within [0, MAX_CLAIM_LOCKUP_SECONDS].
         let claim_lockup = config.claim_lockup_seconds.unwrap_or(DEFAULT_CLAIM_LOCKUP_SECONDS);
@@ -855,7 +897,16 @@ if config.randomness_source == RandomnessSource::External {
         env: Env,
         owner: Address,
     ) -> Result<u32, Error> {
-        views::get_remaining_ticket_allowance(env, owner)
+        let raffle = read_raffle(&env)?;
+        let Some(cap) = effective_max_tickets_per_address(&raffle) else {
+            return Ok(u32::MAX);
+        };
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TicketCount(owner))
+            .unwrap_or(0);
+        Ok(cap.saturating_sub(current))
     }
 
     /// Quote the exact cost of buying `quantity` tickets including early-bird

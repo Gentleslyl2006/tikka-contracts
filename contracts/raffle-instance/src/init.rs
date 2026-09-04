@@ -96,7 +96,7 @@ pub(crate) fn init(
     factory: Address,
     admin: Address,
     creator: Address,
-    config: RaffleConfig,
+    mut config: RaffleConfig,
 ) -> Result<(), Error> {
     if env.storage().instance().has(&DataKey::Raffle) {
         return Err(Error::AlreadyInitialized);
@@ -123,6 +123,12 @@ pub(crate) fn init(
         return Err(Error::InvalidTicketRange);
     }
     if config.max_tickets_per_tx == 0 || config.max_tickets_per_tx > config.max_tickets {
+        return Err(Error::InvalidParameters);
+    }
+    if config.max_tickets_per_address == 0 && !config.allow_multiple {
+        config.max_tickets_per_address = 1;
+    }
+    if config.max_tickets_per_address > config.max_tickets {
         return Err(Error::InvalidParameters);
     }
     if config.ticket_price < MIN_TICKET_PRICE {
@@ -212,6 +218,7 @@ pub(crate) fn init(
         max_tickets_per_tx: config.max_tickets_per_tx,
         min_tickets: config.min_tickets,
         allow_multiple: config.allow_multiple,
+        max_tickets_per_address: config.max_tickets_per_address,
         ticket_price: config.ticket_price,
         payment_token: config.payment_token.clone(),
         prize_token: config.payment_token.clone(),

@@ -105,6 +105,8 @@ use crate::helpers::bump_raffle_ttl;
 ///   concurrent modification detected.
 /// - [`Error::RaffleExpired`] — deadline passed and `no_deadline` is false.
 /// - [`Error::TicketsSoldOut`] — purchase would exceed `max_tickets`.
+/// - [`Error::ExceedsMaxTicketsPerAddress`] — purchase would exceed
+///   `max_tickets_per_address`.
 /// - [`Error::MultipleTicketsNotAllowed`] — `allow_multiple` is false and
 ///   buyer already holds a ticket or `quantity > 1`.
 /// - [`Error::InvalidParameters`] — arithmetic overflow computing
