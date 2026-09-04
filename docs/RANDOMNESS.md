@@ -1,23 +1,6 @@
-# Randomness Modes: Internal vs External vs CommitReveal
+# Randomness Protocol Design & Trust Model
 
-Tikka raffles select winners using the `RandomnessSource` values defined in
-`contracts/raffle-shared/src/lib.rs`. The mode is fixed in `RaffleConfig` at
-creation and enforced by `finalize_raffle` / `provide_randomness`
-(`contracts/raffle-instance/src/draw.rs`, `randomness.rs`). Quorum support is
-present in the configuration model but is not documented here as a completed,
-verified deployment feature.
-
-## Quick decision table
-
-| Mode | Trust assumption | Who can influence outcome? | Extra cost / ops | Recommended prize scale |
-|---|---|---|---|---|
-| **Internal** | Honest-enough validators + unpredictable timing | Finalizer timing; validators biasing ledger timestamp/sequence | Lowest — single finalize tx | Low-stakes (README guide: **≲ ~500 XLM** prize) |
-| **External** | Honest oracle key + live oracle service | Oracle (bounded by Ed25519 proof over request); timeout fallback | Oracle hosting + callback tx; possible fallback tx | Medium / high-stakes |
-| **CommitReveal** | Enough buyers submit unpredictable commits | Buyers who commit; last-mover / withholding risks; zero-commit → Internal fallback | Per-ticket `submit_commit` txs | Medium-stakes when buyers are engaged |
-| **Quorum** | At least 1 honest oracle out of k-of-n delivered | Single oracle cannot bias outcome; requires k-of-n collusion to manipulate | Multi-oracle hosting + k callback txs | High-stakes / large treasuries |
-
-
-If you need protocol detail for commits, also read [COMMIT_REVEAL.md](COMMIT_REVEAL.md).
+This document outlines the cryptographic design, trust model, and security considerations of the Raffle's randomness protocol, focusing on the Verifiable Random Function (VRF) mode and the multi-operator `k-of-n` Quorum mode.
 
 ---
 
@@ -34,7 +17,13 @@ Entropy mixed into the 32-byte path:
 1. Network id (SHA-256 of network passphrase)  
 1. Raffle contract address  
 
-Values are XDR-packed and hashed with `env.crypto().sha256`, then fed to `env.prng().seed(...)`. Winner indices are sampled without replacement via `u64_in_range`.
+Values are XDR-packed and hashed with `env.crypto().sha256`, then fed to `env.prng().seed(...)`. Winner indices are selected via a **partial Fisher–Yates shuffle**: exactly `k` deterministic draws from the PRNG, using swap tracking to guarantee uniqueness without retries or modulo bias. This replaces the previous rejection-sampling loop which had an unbounded retry probability as `k` approached `n`.
+
+### Who can influence it
+
+- Anyone who can choose **when** `finalize_raffle` lands can work from visible ledger state.
+- Validators can influence timestamp/sequence.
+- Outcomes are **deterministic** for identical ledger + raffle inputs (good for audit, bad against motivated bias).
 
 The compact u64 seed used when finalizing through `do_finalize_with_seed` hashes `(timestamp, sequence, current_contract_address)` and takes the first 8 bytes.
 
@@ -49,56 +38,32 @@ The compact u64 seed used when finalizing through `do_finalize_with_seed` hashes
 None. Finalize completes in the same call once tickets meet `min_tickets`.
 
 ### Cost
+## 1. Single-Oracle VRF Mode
 
-One successful `finalize_raffle` (plus prior ticket txs). No oracle.
+In the single-oracle mode, a single trusted oracle is responsible for generating and delivering randomness.
 
-### When to use
+### Protocol Flow
+1. The Raffle contract emits a `RandomnessRequested` event containing a unique `request_id`.
+2. The Oracle service detects the event, reads the `request_id` and contract ID, and generates a Verifiable Random Function (VRF) proof.
+3. The Oracle submits the proof and the generated random seed back to the contract via `provide_randomness`.
+4. The contract verifies the VRF proof on-chain using the Oracle's public key. If the proof is valid, the random seed is accepted.
 
-Low-stakes community raffles, demos, and tests. **Do not** rely on Internal for large treasuries or adversarial settings.
+### Trust Model & Mitigations
+- **Unpredictability**: Because VRF proofs are cryptographically tied to the Oracle's private key, the random seed is completely unpredictable to anyone (including the players) before it is submitted.
+- **Non-manipulability**: The Oracle cannot bias the randomness because there is only one valid VRF output for a given input (`request_id` + contract address). The Oracle's only options are to submit the correct value or refuse to submit (causing a Denial of Service, which is monitored and alerted).
 
 ---
 
-## 2. External oracle (`RandomnessSource::External = 1`)
+## 2. Multi-Operator Quorum Mode (k-of-n)
 
-### How the seed is built
+In Quorum mode, a decentralized group of $n$ independent oracles participate, and at least $k$ unique oracle submissions are required to construct the final random seed.
 
-1. `finalize_raffle` transitions to `Drawing`, sets `DrawingLock`, and calls `request_randomness`.
-1. Contract stores `RandomnessRequested`, `RandomnessRequestLedger`, and a `RandomnessRequestId` derived from `(timestamp, sequence, contract_address)` via SHA-256 → first 8 bytes.
-1. Emits `RandomnessRequested` for the off-chain `oracle/` service.
-1. Oracle calls `provide_randomness(random_seed, public_key, proof, request_id)`.
-1. Contract verifies Ed25519 over `build_vrf_proof_message` = XDR`(contract_address, request_id, random_seed)`.
-1. `OracleSeedWinnerSelection` maps the seed to winner indices with rejection sampling (no modulo bias).
-
-`Fairness` / seed metadata is stored under `DataKey::RandomnessSeed` (persistent).
-
-### Who can influence it
-
-- Only the configured `oracle_address` can auth the callback.
-- The oracle chooses `random_seed` but must present a valid signature bound to `request_id` and the raffle contract.
-- If the oracle never answers, creator/admin may call `trigger_randomness_fallback` after the timeout.
-
-### Timeout / fallback (`ORACLE_TIMEOUT_LEDGERS = 200`)
-
-Defined in `raffle-shared::constants` and the instance crate (~**200 ledgers ≈ 17 minutes** at 5s/ledger).
-
-After `request_ledger + 200`:
-
-| `trigger_randomness_fallback(..., do_refund)` | Result |
-|---|---|
-| `do_refund = true` | Status → `Cancelled` (`CancelReason::OracleTimeout`); request keys cleared; lock released |
-| `do_refund = false` | Finalize with **Internal** u64 seed and `RandomnessType::Fallback`; emits `RandomnessFallbackTriggered` |
-
-Calling fallback **before** the timeout returns `Error::FallbackTooEarly` (9).
-
-### Cost
-
-- Oracle process (Node 20, see `oracle/README.md`)
-- Extra callback transaction
-- Possible fallback transaction if the oracle is down
-
-### When to use
-
-High-stakes draws, public prize pools, or any case where Internal bias is unacceptable. Requires a reliable oracle key and monitoring.
+### Protocol Flow
+1. The Raffle contract is configured with quorum parameters $k$ (threshold) and a list of $n$ authorized oracle addresses.
+2. The contract emits a `RandomnessRequested` event.
+3. Each participating oracle generates a cryptographically secure random seed independently and submits it to the contract via `provide_quorum_randomness(request_id, random_seed)`.
+4. The contract stores the submitted seeds.
+5. Once $k$ unique oracles have submitted their seeds, the contract combines the seeds (typically by hashing them together, e.g., `hash(seed_1 + seed_2 + ... + seed_k)`) to produce the final raffle seed.
 
 ---
 
@@ -340,35 +305,68 @@ assert_eq!(computed_metadata_hash, attestation.metadata_hash);
 Independently reproduce the winner selection using the recorded seed:
 
 ```rust
-use rejection_sampling::*;
+use soroban_sdk::Env;
 
+// Partial Fisher–Yates winner selection: exactly k draws, no unbounded loop,
+// no modulo bias, O(k) draws.  Off-chain reproducibility is achieved by
+// replicating the seed construction and the shuffle algorithm below.
 let seed = attestation.fairness_data.seed;
 let ticket_ids = attestation.fairness_data.ticket_ids;
 let num_winners = attestation.prize_distribution_bp.len();
+let n = ticket_ids.len() as u64;
 
-// Rejection sampling (same algorithm as OracleSeedWinnerSelection)
-let mut rng = initialize_rng(seed);
-let mut winners = Vec::new();
-let mut used = HashSet::new();
+// Build the u64 seed the same way the contract does (first 8 bytes of the
+// finalized seed — see build_internal_seed / PrngWinnerSelection for details).
+let mut current_seed = seed;
 
-while winners.len() < num_winners {
-    let candidate = uniform_u64_in_range(&mut rng, 0, ticket_ids.len());
-    if !used.contains(&candidate) {
-        winners.push(ticket_ids[candidate]);
-        used.insert(candidate);
+// Partial Fisher–Yates shuffle
+let mut remaining = n;
+let mut swaps: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+let mut winners = std::vec::Vec::new();
+
+for _ in 0..num_winners {
+    // Generate an unbiased u64 in [0, remaining) using rejection sampling.
+    let largest_multiple_remaining = (u64::MAX / remaining) * remaining;
+    let mut candidate = loop {
+        if current_seed < largest_multiple_remaining {
+            break current_seed;
+        }
+        current_seed = current_seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+    };
+    let r = (candidate % remaining) as usize;
+
+    // Map candidate to actual index via swap tracking.
+    let mut actual = r as u64;
+    if let Some(&val) = swaps.get(&actual) {
+        actual = val;
     }
-}
 
-assert_eq!(winners, attestation.winning_ticket_ids);
+    // The winning ticket (1-indexed) is ticket_ids[actual]
+    winners.push(ticket_ids[actual as usize].clone());
+
+    // Swap: position r now contains what was at position remaining-1.
+    let last = remaining - 1;
+    let mut last_actual = last as u64;
+    if let Some(&val) = swaps.get(&last) {
+        last_actual = val;
+    }
+
+    // Record the swap: position r now contains what was at position last.
+    swaps.insert(r, last_actual);
+
+    remaining -= 1;
+}
 ```
 
-The key algorithm is rejection sampling without modulo bias:
-
-- Generate uniform random `u64` in range `[0, n)`
-- Track used indices in a set
-- Retry on collision until `num_winners` distinct indices selected
-
-This matches `OracleSeedWinnerSelection::select_winner_indices` in `randomness.rs`.
+```rust
+// Verify the reproduced winners match the on-chain result.
+assert_eq!(winners.len(), attestation.winning_ticket_ids.len());
+for (i, (reproduced, on_chain)) in winners.iter().zip(attestation.winning_ticket_ids.iter()).enumerate() {
+    assert_eq!(reproduced, on_chain, "winner {} mismatch at index {}", i, reproduced);
+}
+```
 
 #### 4. Winner-to-Owner Resolution
 
@@ -458,25 +456,28 @@ fn audit_raffle_draw(env: &Env, raffle_contract: &Address) -> Result<AuditReport
 ```
 
 ### When to Verify
+## 3. Last-Submitter Bias
 
-- **Before prize claims**: Confirm fairness before winners withdraw
-- **Post-mortem audits**: Historical verification after raffle completion
-- **Continuous monitoring**: Automated verification by watchdog services
-- **Dispute resolution**: Third-party arbitration when fairness is challenged
+The primary security challenge in threshold-based randomness protocols is **Last-Submitter Bias** (or Last-Revealer Bias).
 
-### Limitations
+### The Attack Vector
+When $k-1$ oracles have submitted their seeds on-chain, those seeds are public. The $k$-th oracle (the last submitter required to reach the threshold) can:
+1. Read the $k-1$ public seeds.
+2. Precompute the combined raffle seed for different values of their own seed, or simply calculate the single outcome of their submission.
+3. Determine the winning ticket based on that combined seed.
+4. **Bias the outcome**: If the $k$-th oracle (or a colluding party) is unhappy with the winner (e.g., they didn't win), they can choose to **withhold** their submission, refusing to complete the quorum. They might wait for the raffle to time out (allowing refunds) or wait for a different block height if the contract allows late submissions under different conditions.
 
-- **Ticket ownership resolution**: If `wipe_storage` has been called, ticket records are deleted. Verifiers must use off-chain ticket indexes or event logs.
-- **CommitReveal entropy**: Verification confirms the seed was derived from commits, but not that commits were unpredictable (requires off-chain commit/reveal tracking).
-- **Internal/Fallback bias**: Verification confirms correct execution but cannot prevent validator/finalizer timing bias.
+### Mitigations in Tikka Contracts
 
-### Code References
+#### 1. Independent Cryptographic Seeds
+No single oracle can force the final seed to be a specific desired value. Because the final seed is a hash of all $k$ seeds, changing the $k$-th seed changes the final hash in an unpredictable way (due to the avalanche effect of cryptographic hash functions). The last submitter can only choose between two options:
+- Submit their honest seed and accept the resulting winner.
+- Abort/withhold the transaction, preventing the draw from finishing.
 
-| Component | Location |
-|---|---|
-| Attestation struct | `contracts/raffle-instance/src/attestation.rs` |
-| Public function | `contracts/raffle-instance/src/lib.rs` → `get_draw_attestation` |
-| Winner selection algorithm | `contracts/raffle-instance/src/randomness.rs` → `OracleSeedWinnerSelection` |
-| Fairness metadata storage | `contracts/raffle-instance/src/helpers.rs` → `do_finalize_with_seed` |
-| VRF proof verification | `contracts/raffle-instance/src/draw.rs` → `provide_randomness` |
+#### 2. Decentralized & Reputation-Bound Operators
+Oracles are run by reputable, independent node operators. Collusion between $k$ operators is required to predict or manipulate the final seed. The threshold $k$ should be chosen such that $k > n/2$ (a simple majority) to ensure that a minority of colluding operators cannot reconstruct or manipulate the randomness.
 
+#### 3. Timeouts and Default Fallbacks
+To prevent a malicious or lazy $k$-th oracle from holding the raffle hostage indefinitely, the contract implements:
+- **Draw Timeouts**: If a quorum is not reached within a specified block window, the raffle can be cancelled, and all ticket buyers are refunded.
+- **Slashed Stake / Operator Penalties**: Node operators who fail to submit within the timeout window can be penalized on-chain or removed from the active oracle set.

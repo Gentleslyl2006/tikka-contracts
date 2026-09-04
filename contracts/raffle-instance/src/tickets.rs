@@ -61,8 +61,9 @@ use crate::helpers::bump_raffle_ttl;
 /// 5. Verifies the raffle is `Active`, prize has been deposited, and the
 ///    deadline has not passed (unless `no_deadline` is set).
 /// 6. Checks `allow_multiple` — when `false`, each address may only hold one
-///    ticket across all transactions. The reserved
-///    `max_tickets_per_address` field is not enforced yet.
+///    ticket across all transactions. When `max_tickets_per_address > 0`, the
+///    per-address cap is enforced and exceeding it returns
+///    [`Error::ExceedsMaxTicketsPerAddress`].
 /// 7. Performs a double-read concurrency guard (snapshot vs. persisted state).
 /// 8. Writes each [`Ticket`] to persistent storage under
 ///    [`DataKey::Ticket(id)`](crate::DataKey::Ticket).
@@ -324,7 +325,7 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
         ticket_ids,
         quantity,
         ticket_price: raffle.ticket_price,
-        effective_ticket_price: effective_price,
+        effective_ticket_price: raffle.ticket_price,
         total_paid: total_price,
         protocol_fee,
         timestamp,
@@ -337,6 +338,45 @@ pub(crate) fn buy_tickets(env: Env, buyer: Address, quantity: u32) -> Result<u32
     Ok(raffle.tickets_sold)
 }
 
+/// Purchase one or more raffle tickets on behalf of `recipient`, paid for by
+/// `buyer` (a "gift" purchase).
+///
+/// Shares most of [`buy_tickets`]'s validation, fee model, and automatic
+/// draw trigger — except `recipient` (not `buyer`) is the address credited
+/// with owning the tickets and checked against `max_tickets_per_address` /
+/// `allow_multiple`; `buyer` still pays and must authorize the call. Unlike
+/// [`buy_tickets`], this function does **not** check the factory-level
+/// global pause flag (`require_global_not_paused`) — only the per-raffle
+/// `ticket_sales_paused` flag is enforced here. This is pre-existing
+/// behavior, not part of the `end_time` fix below; see the raffle-wide
+/// pause note under `# Errors`.
+///
+/// # Auth
+///
+/// Requires authorization from `buyer`.
+///
+/// # Parameters
+///
+/// - `buyer` — Address paying `ticket_price * quantity`.
+/// - `recipient` — Address credited with the purchased tickets.
+/// - `quantity` — Number of tickets to purchase in this transaction.
+///
+/// # Returns
+///
+/// The new total number of tickets sold across the entire raffle after this
+/// purchase completes.
+///
+/// # Errors
+///
+/// Same error set as [`buy_tickets`] (minus the global-pause case noted
+/// above), with per-address checks evaluated against `recipient` instead of
+/// `buyer`. Notably:
+///
+/// - [`Error::RaffleExpired`] — deadline passed and `no_deadline` is false.
+///   `end_time` is an exclusive boundary: the deadline is reached starting
+///   at `ledger_timestamp == end_time` (see `docs/GLOSSARY.md` § "End Time").
+///
+/// See [`buy_tickets`] for the full error list and event documentation.
 pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quantity: u32) -> Result<u32, Error> {
     let drawing_lock: bool = env.storage().instance().get(&crate::DataKey::DrawingLock).unwrap_or(false);
     if drawing_lock {
@@ -361,7 +401,7 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     if !raffle.prize_deposited {
         return Err(Error::InvalidStateTransition);
     }
-    if !raffle.no_deadline && env.ledger().timestamp() > raffle.end_time {
+    if !raffle.no_deadline && env.ledger().timestamp() >= raffle.end_time {
         return Err(Error::RaffleExpired);
     }
 
@@ -387,7 +427,6 @@ pub(crate) fn buy_tickets_for(env: Env, buyer: Address, recipient: Address, quan
     }
 
     let timestamp = env.ledger().timestamp();
-    let total_price = raffle.ticket_price.checked_mul(quantity as i128).ok_or(Error::InvalidParameters)?;
     let protocol_fee = total_price.checked_mul(raffle.protocol_fee_bp as i128).ok_or(Error::ArithmeticOverflow)? / 10000;
 
     let persisted = crate::read_raffle(&env)?;

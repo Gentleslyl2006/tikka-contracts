@@ -34,10 +34,10 @@ fn outstanding_prize(env: &Env, raffle: &crate::Raffle) -> Result<i128, Error> {
     }
 
     let mut outstanding = 0i128;
-    for (tier_index, winner) in raffle.winners.iter().enumerate() {
-        if !winner.claimed {
+    for tier_index in 0..raffle.winners.len() {
+        if !raffle.claimed_winners.get(tier_index).unwrap_or(false) {
             outstanding = outstanding
-                .checked_add(calculate_tier_prize(raffle, tier_index as u32)?)
+                .checked_add(calculate_tier_prize(raffle, tier_index)?)
                 .ok_or(Error::ArithmeticOverflow)?;
         }
     }
@@ -75,7 +75,10 @@ pub(crate) fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
     if !new_admin.exists() || new_admin == env.current_contract_address() {
         return Err(Error::InvalidAdminAddress);
     }
-    env.storage().persistent().set(&DataKey::Admin, &new_admin);
+    // `init` and `require_admin` read/write DataKey::Admin from instance storage;
+    // keep the rotated admin on the same tier or every admin entrypoint bricks
+    // after a rotation (#751).
+    env.storage().instance().set(&DataKey::Admin, &new_admin);
     Ok(())
 }
 
