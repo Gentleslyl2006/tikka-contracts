@@ -183,6 +183,27 @@ pub(crate) fn require_not_paused(env: &Env) -> Result<(), Error> {
     Ok(())
 }
 
+/// Blocks ticket purchases (and other guarded ops) while the protocol-wide
+/// **global pause** is engaged.
+///
+/// This intentionally consults the factory's `is_global_paused` flag — the one
+/// toggled by `emergency_pause_all` / `emergency_unpause_all`. That is the
+/// single switch that halts every deployed instance at once, which is why an
+/// `emergency_pause_all` call stops ticket purchases here even though this
+/// contract was already deployed.
+///
+/// It does **not** consult the factory's `DataKey::Paused` (`pause_factory`)
+/// or `DataKey::CreationPaused` (`set_creation_paused`) flags: `pause_factory`
+/// only stops new activity at the factory level and `set_creation_paused` only
+/// blocks `create_raffle`. Neither reaches existing instances by design.
+///
+/// Precedence (highest to lowest, factory-side):
+///   1. global pause  (`emergency_pause_all`)   → blocks everything, all instances
+///   2. factory pause  (`pause_factory`)         → blocks factory-level ops only
+///   3. creation pause (`set_creation_paused`)   → blocks `create_raffle` only
+///
+/// See `contracts/raffle-factory/src/pause.rs` for the authoritative table and
+/// `docs/ARCHITECTURE.md` / `oracle/RUNBOOK.md` for the incident-response call.
 pub(crate) fn require_global_not_paused(env: &Env) -> Result<(), Error> {
     let factory: Address = env
         .storage()
@@ -224,6 +245,12 @@ pub(crate) fn build_internal_seed_u64(env: &Env) -> u64 {
 }
 
 pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i128, Error> {
+    if raffle.prizes.is_empty() {
+        return Err(Error::InvalidParameters);
+    }
+    if tier_index >= raffle.prizes.len() {
+        return Err(Error::InvalidIndex);
+    }
     let last_tier_index = raffle.prizes.len() - 1;
     if tier_index == last_tier_index {
         let mut allocated = 0i128;
@@ -249,9 +276,6 @@ pub(crate) fn calculate_tier_prize(raffle: &Raffle, tier_index: u32) -> Result<i
         .checked_mul(bp as i128)
         .ok_or(Error::ArithmeticOverflow)
         .map(|a| a / 10000)
-}
-
-    initial_index
 }
 
 /// Finalize the raffle using a pre-computed `u64` seed.
@@ -327,11 +351,15 @@ pub(crate) fn do_finalize_with_seed(
             idx = resolve_unique_winner(env, seed, i as u32, total_tickets, &winners, idx);
             winning_ticket_ids.set(i, idx);
         }
-        let winner = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
-        winners.push_back(winner.clone());
+        let owner = get_ticket_owner(env, idx + 1).ok_or(Error::TicketNotFound)?;
+        winners.push_back(crate::Winner {
+            address: owner.clone(),
+            claimed: false,
+            prize_index: i as u32,
+        });
         WinnerDrawn {
             winner,
-            ticket_id: idx,
+            ticket_id: idx + 1,
             tier_index: i,
             timestamp: env.ledger().timestamp(),
         }
@@ -351,22 +379,12 @@ pub(crate) fn do_finalize_with_seed(
             winning_ticket_indices: winning_ticket_ids.clone(),
             draw_timestamp: env.ledger().timestamp(),
             draw_sequence: env.ledger().sequence(),
-        },
-    );
-
-    env.storage().persistent().set(
-        &DataKey::RandomnessSeed,
-        &FairnessMetadata {
-            seed,
-            randomness_source: raffle.randomness_source.clone(),
-            winning_ticket_indices: winning_ticket_ids.clone(),
-            draw_timestamp: env.ledger().timestamp(),
-            draw_sequence: env.ledger().sequence(),
             unique_winners: raffle.unique_winners,
         },
     );
 
     raffle.winners = winners.clone();
+    raffle.claimed_winners = claimed_winners;
     raffle.finalized_at = Some(env.ledger().timestamp());
     transition_status(
         env,
@@ -376,6 +394,7 @@ pub(crate) fn do_finalize_with_seed(
     )?;
     raffle.finalized_at = Some(env.ledger().timestamp());
     write_raffle(env, &raffle);
+    record_leaderboard(env, &raffle);
 
     env.storage()
         .instance()
@@ -386,11 +405,17 @@ pub(crate) fn do_finalize_with_seed(
     env.storage()
         .instance()
         .remove(&DataKey::RandomnessRequestLedger);
+    clear_quorum_storage(env);
     env.storage().instance().set(&DataKey::DrawingLock, &false);
+
+    let mut winner_addresses = Vec::new(env);
+    for w in winners.iter() {
+        winner_addresses.push_back(w.address);
+    }
 
     RaffleFinalized {
         raffle_id: env.current_contract_address(),
-        winners,
+        winners: winner_addresses,
         winning_ticket_ids,
         total_tickets_sold: raffle.tickets_sold,
         randomness_source: raffle.randomness_source.clone(),
@@ -436,4 +461,22 @@ fn record_leaderboard(env: &Env, raffle: &Raffle) {
         &Symbol::new(env, "record_leaderboard_entry"),
         args,
     );
+}
+
+/// Remove all quorum seed storage so a re-draw can accept the same oracles again.
+pub(crate) fn clear_quorum_storage(env: &Env) {
+    if let Some(submitted) = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<Address>>(&DataKey::QuorumSubmittedOracles)
+    {
+        for i in 0..submitted.len() {
+            if let Some(addr) = submitted.get(i) {
+                env.storage().persistent().remove(&DataKey::QuorumSeed(addr));
+            }
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::QuorumSubmittedOracles);
+    }
 }

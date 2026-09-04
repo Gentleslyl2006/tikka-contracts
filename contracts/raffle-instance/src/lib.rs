@@ -1,5 +1,7 @@
 #![no_std]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![warn(clippy::arithmetic_side_effects)]
+#![deny(unused)]
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
@@ -20,16 +22,22 @@ mod tickets;
 mod views;
 
 pub(crate) use helpers::do_finalize_with_seed;
+pub(crate) use helpers::{
+    calculate_tier_prize, read_raffle, require_admin, require_global_not_paused,
+    require_not_paused, request_randomness, transition_status, transition_to_drawing,
+    validate_token_address, write_raffle, Guard,
+};
 
 use raffle_shared::{
     constants::{
-        DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_SWAP_DEADLINE_SECONDS, EMERGENCY_WITHDRAW_DELAY_SECONDS,
-        MAX_CLAIM_LOCKUP_SECONDS, MAX_DESCRIPTION_LENGTH, MAX_PRIZES, MAX_PRIZE_AMOUNT,
-        MAX_PROTOCOL_FEE_BP, MAX_SWAP_DEADLINE_SECONDS, MAX_TICKETS_LIMIT, MIN_TICKET_PRICE,
+        DEFAULT_CLAIM_EXPIRY_SECONDS, DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_SWAP_DEADLINE_SECONDS,
+        EMERGENCY_WITHDRAW_DELAY_SECONDS, MAX_CLAIM_LOCKUP_SECONDS, MAX_DESCRIPTION_LENGTH,
+        MAX_PRIZES, MAX_PRIZE_AMOUNT, MAX_PROTOCOL_FEE_BP, MAX_SWEEP_UNCLAIMED_PER_CALL,
+        MAX_SWAP_DEADLINE_SECONDS, MAX_TICKETS_LIMIT, MIN_CLAIM_EXPIRY_SECONDS, MIN_TICKET_PRICE,
         ORACLE_TIMEOUT_LEDGERS,
     },
     CancelReason, FailureReason, FairnessData, QuorumConfig, RaffleConfig, RaffleStatus,
-    RandomnessSource, RandomnessType, Ticket, Winner,
+    RandomnessSource, RandomnessType, Ticket,
 };
 
 use self::randomness::{
@@ -40,9 +48,11 @@ use crate::events::{
     CancelScheduled, ContractPaused, ContractUnpaused, DrawTriggered, EmergencyWithdrawn,
     FeesWithdrawn, MetadataHashUpdated, OracleAddressUpdated, PrizeClaimed, PrizeDeposited,
     PrizeRefunded, ProtocolFeeUpdated, RaffleCancelled, RaffleCreated, RaffleFailed,
-    RaffleFinalized, RaffleStatusChanged, RandomnessFallbackTriggered, RandomnessReceived,
-    RandomnessRequested, StorageWiped, SwapDeadlineUpdated, TicketNftMinted, TicketPurchased,
+    RaffleFinalized, RaffleStatusChanged, OracleSeedDelivered, RandomnessFallbackTriggered,
+    RandomnessReceived, RandomnessRequested, StorageWiped, SwapDeadlineUpdated, TicketNftMinted,
+    TicketPurchased,
     TicketRefunded, TicketSalesPaused, TicketSalesResumed, TokensRescued, WinnerDrawn,
+    OracleSeedDelivered,
 };
 
 const RANDOMNESS_MIN_DELAY_LEDGERS: u32 = 10;
@@ -72,10 +82,10 @@ pub struct Raffle {
     pub tickets_sold: u32,
     pub status: RaffleStatus,
     pub prize_deposited: bool,
-    /// Unified winner list.  Each entry carries the winner's address, claim
-    /// state, and prize tier in a single struct — eliminating the old
-    /// parallel-array pattern (`winners: Vec<Address>` + `claimed_winners: Vec<bool>`).
-    pub winners: Vec<Winner>,
+    /// Winner addresses, indexed by prize tier.
+    pub winners: Vec<Address>,
+    /// Per-tier claim flag, parallel to `winners`.
+    pub claimed_winners: Vec<bool>,
     pub randomness_source: RandomnessSource,
     pub oracle_address: Option<Address>,
     pub protocol_fee_bp: u32,
@@ -84,6 +94,7 @@ pub struct Raffle {
     pub tikka_token: Option<Address>,
     pub finalized_at: Option<u64>,
     pub claim_lockup_seconds: u64,
+    pub claim_expiry_seconds: u64,
     pub swap_deadline_seconds: u64,
     pub ticket_sales_paused: bool,
     /// The percentage of max_tickets covered by the early bird discount (0 to disable).
@@ -143,62 +154,112 @@ pub struct CommitRevealEntry {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Error {
+    /// Raffle storage entry is missing. Code 1.
     RaffleNotFound = 1,
+    /// Raffle is not in an active state for ticket sales. Code 2.
     RaffleInactive = 2,
+    /// All tickets have been sold. Code 3.
     TicketsSoldOut = 3,
+    /// Caller balance is insufficient for the operation. Code 4.
     InsufficientFunds = 4,
+    /// Caller is not authorized for this action. Code 5.
     NotAuthorized = 5,
+    /// External randomness requested but oracle is not configured. Code 6.
     OracleNotSet = 6,
+    /// Randomness was already requested for this draw. Code 7.
     RandomnessAlreadyRequested = 7,
+    /// No pending randomness request exists. Code 8.
     NoRandomnessRequest = 8,
+    /// Fallback randomness cannot be used yet. Code 9.
     FallbackTooEarly = 9,
+    /// Prize has not been deposited by the creator. Code 11.
     PrizeNotDeposited = 11,
+    /// Prize tier was already claimed or swept. Code 12.
     PrizeAlreadyClaimed = 12,
+    /// Prize deposit was already completed. Code 13.
     PrizeAlreadyDeposited = 13,
+    /// Caller is not the winner for this tier. Code 14.
     NotWinner = 14,
+    /// Claim or sweep attempted before the configured delay elapsed. Code 15.
     ClaimTooEarly = 15,
+    /// One or more input parameters are invalid. Code 21.
     InvalidParameters = 21,
+    /// Ticket quantity is out of range. Code 22.
     InvalidQuantity = 22,
+    /// Raffle status does not allow this operation. Code 23.
     InvalidStatus = 23,
+    /// Contract is paused. Code 24.
     ContractPaused = 24,
+    /// Requested lifecycle transition is not allowed. Code 25.
     InvalidStateTransition = 25,
+    /// Raffle end time has passed. Code 26.
     RaffleExpired = 26,
+    /// Minimum ticket threshold was not met. Code 31.
     InsufficientTickets = 31,
+    /// Address already holds a ticket when multiples are disallowed. Code 32.
     MultipleTicketsNotAllowed = 32,
+    /// No tickets were sold. Code 33.
     NoTicketsSold = 33,
+    /// Ticket record was not found. Code 34.
     TicketNotFound = 34,
+    /// Raffle has already ended. Code 35.
     RaffleEnded = 35,
+    /// Integer overflow in a contract calculation. Code 41.
     ArithmeticOverflow = 41,
+    /// Contract initialization was already performed. Code 42.
     AlreadyInitialized = 42,
+    /// Contract has not been initialized. Code 43.
     NotInitialized = 43,
+    /// Reentrant call detected. Code 44.
     Reentrancy = 44,
+    /// Token transfer failed. Code 45.
     TokenTransferFailed = 45,
+    /// No active tickets remain for the operation. Code 46.
     NoActiveTickets = 46,
+    /// Token swap deadline has passed. Code 47.
     DeadlinePassed = 47,
+    /// Swap output below slippage tolerance. Code 48.
     SlippageExceeded = 48,
+    /// Index is out of bounds. Code 49.
     InvalidIndex = 49,
+    /// More prize tiers configured than tickets sold. Code 50.
     MorePrizesThanTickets = 50,
+    /// Computed prize amount is zero. Code 51.
     ZeroPrize = 51,
+    /// Token address is invalid or unsupported. Code 52.
     InvalidTokenAddress = 52,
+    /// Prize tier count exceeds protocol maximum. Code 53.
     TooManyPrizes = 53,
+    /// Emergency withdraw attempted before the delay elapsed. Code 54.
     EmergencyTooEarly = 54,
+    /// Minimum tickets exceed maximum tickets. Code 55.
     InvalidTicketRange = 55,
+    /// Accumulated fees are below the requested withdrawal. Code 56.
     InsufficientAccumulatedFees = 56,
+    /// Prize configuration is locked after deposits or sales. Code 57.
     PrizeConfigurationLocked = 57,
+    /// Ticket purchase exceeds per-transaction cap. Code 58.
     ExceedsMaxTicketsPerTx = 58,
-    ExceedsMaxTicketsPerAddress = 65,
     DrawingAlreadyInProgress = 59,
-    InvalidStatusForDrawingTransition = 60, // Note: This seems to be a copy-paste error in the original code.
+    /// Invalid status for entering the drawing phase. Code 60.
+    InvalidStatusForDrawingTransition = 60,
+    /// Draw has already completed. Code 61.
     DrawingAlreadyComplete = 61,
+    /// End time is in the past or otherwise invalid. Code 62.
     InvalidEndTime = 62,
+    /// Admin address is zero, self, or otherwise invalid. Code 63.
     InvalidAdminAddress = 63,
+    /// Randomness callback received before the minimum delay. Code 64.
     RandomnessTooEarly = 64,
     CancelTimelockActive = 65,
     CancelNotScheduled = 66,
+    ExceedsMaxTicketsPerAddress = 67,
+    OracleNotRegistered = 68,
+    DuplicateOracleSubmission = 69,
 }
 
 #[contractimpl]
-impl Contract {
+impl RaffleInstance {
     pub fn init(
         env: Env,
         factory: Address,
@@ -234,7 +295,9 @@ impl Contract {
         if config.max_tickets_per_tx == 0 || config.max_tickets_per_tx > config.max_tickets {
             return Err(Error::InvalidParameters);
         }
-        if config.max_tickets_per_address > config.max_tickets {
+        if config.max_tickets_per_address > 0
+            && config.max_tickets_per_address > config.max_tickets
+        {
             return Err(Error::InvalidParameters);
         }
 
@@ -255,7 +318,12 @@ impl Contract {
         }
         let mut total_prizes_bp = 0u32;
         for prize_bp in config.prizes.iter() {
-            total_prizes_bp += prize_bp;
+            if prize_bp > 10_000 {
+                return Err(Error::InvalidParameters);
+            }
+            total_prizes_bp = total_prizes_bp
+                .checked_add(prize_bp)
+                .ok_or(Error::InvalidParameters)?;
         }
         if total_prizes_bp != 10000 {
             return Err(Error::InvalidParameters);
@@ -326,12 +394,22 @@ if config.randomness_source == RandomnessSource::External {
         let config = config.resolve_defaults();
 
         // #259: claim_lockup_seconds must be within [0, MAX_CLAIM_LOCKUP_SECONDS].
-        if config.claim_lockup_seconds > MAX_CLAIM_LOCKUP_SECONDS {
+        let claim_lockup = config.claim_lockup_seconds.unwrap_or(DEFAULT_CLAIM_LOCKUP_SECONDS);
+        if claim_lockup > MAX_CLAIM_LOCKUP_SECONDS {
+            return Err(Error::InvalidParameters);
+        }
+
+        let claim_expiry = config.claim_expiry_seconds.unwrap_or(DEFAULT_CLAIM_EXPIRY_SECONDS);
+        if claim_expiry < MIN_CLAIM_EXPIRY_SECONDS {
+            return Err(Error::InvalidParameters);
+        }
+        if claim_expiry <= claim_lockup {
             return Err(Error::InvalidParameters);
         }
 
         // Swap deadline must be within [0, MAX_SWAP_DEADLINE_SECONDS].
-        if config.swap_deadline_seconds > MAX_SWAP_DEADLINE_SECONDS {
+        let swap_deadline = config.swap_deadline_seconds.unwrap_or(DEFAULT_SWAP_DEADLINE_SECONDS);
+        if swap_deadline > MAX_SWAP_DEADLINE_SECONDS {
             return Err(Error::InvalidParameters);
         }
 
@@ -362,6 +440,7 @@ if config.randomness_source == RandomnessSource::External {
             status: RaffleStatus::PendingPrize,
             prize_deposited: false,
             winners: Vec::new(&env),
+            claimed_winners: Vec::new(&env),
             randomness_source: config.randomness_source.clone(),
             oracle_address: config.oracle_address,
             protocol_fee_bp: config.protocol_fee_bp,
@@ -369,8 +448,9 @@ if config.randomness_source == RandomnessSource::External {
             swap_router: config.swap_router,
             tikka_token: config.tikka_token,
             finalized_at: None,
-            claim_lockup_seconds: config.claim_lockup_seconds,
-            swap_deadline_seconds: config.swap_deadline_seconds,
+            claim_lockup_seconds: claim_lockup,
+            claim_expiry_seconds: claim_expiry,
+            swap_deadline_seconds: swap_deadline,
             ticket_sales_paused: false,
             early_bird_ticket_percentage: config.early_bird_ticket_percentage,
             early_bird_discount_bp: config.early_bird_discount_bp,
@@ -399,6 +479,7 @@ if config.randomness_source == RandomnessSource::External {
             randomness_source: config.randomness_source,
             metadata_hash: config.metadata_hash,
             unique_winners: config.unique_winners,
+            claim_expiry_seconds: claim_expiry,
         }
         .publish(&env);
 
@@ -448,6 +529,7 @@ if config.randomness_source == RandomnessSource::External {
     /// aggregated via `aggregate_quorum_seeds` and the raffle is finalized.
     pub fn provide_quorum_randomness(
         env: Env,
+        caller: Address,
         random_seed: u64,
         request_id: u64,
     ) -> Result<(), Error> {
@@ -457,12 +539,9 @@ if config.randomness_source == RandomnessSource::External {
             .get(&DataKey::DrawingLock)
             .unwrap_or(false);
         if !drawing_lock {
-            return Err(Error::DrawingAlreadyComplete);
+            return Err(Error::InvalidStatus);
         }
 
-        let caller = env
-            .invoker()
-            .expect("provide_quorum_randomness: invoker required");
         caller.require_auth();
 
         let raffle = read_raffle(&env)?;
@@ -567,9 +646,14 @@ if config.randomness_source == RandomnessSource::External {
     }
 
     /// Permissionless sweep of unclaimed prizes to treasury after `claim_expiry_seconds`
-    /// has elapsed since finalization.  Returns the number of prizes swept.
-    pub fn sweep_unclaimed(env: Env) -> Result<u32, Error> {
-        crate::claim::sweep_unclaimed(env)
+    /// has elapsed since finalization.  Processes at most `limit` tiers starting at
+    /// `start_index`.  Returns the number of prizes swept in this call.
+    pub fn sweep_unclaimed(
+        env: Env,
+        start_index: u32,
+        limit: u32,
+    ) -> Result<u32, Error> {
+        crate::claim::sweep_unclaimed(env, start_index, limit)
     }
 
     pub fn withdraw_fees(env: Env, recipient: Address, amount: i128) -> Result<(), Error> {
@@ -618,18 +702,16 @@ if config.randomness_source == RandomnessSource::External {
         admin::emergency_withdraw(env, caller)
     }
 
-    pub fn refund_ticket(env: Env, ticket_id: u32) -> Result<i128, Error> {
-        claim::refund_ticket(env, ticket_id)
+    pub fn refund_ticket(env: Env, caller: Address, ticket_id: u32) -> Result<i128, Error> {
+        claim::refund_ticket(env, caller, ticket_id)
     }
 
     pub fn batch_refund_tickets(
         env: Env,
-        owner: Address,
+        caller: Address,
         ticket_ids: Vec<u32>,
     ) -> Result<i128, Error> {
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `claim.rs`.
-        Err(Error::InvalidParameters)
+        claim::batch_refund_tickets(env, caller, ticket_ids)
     }
 
     pub fn get_raffle(env: Env) -> Result<Raffle, Error> {
@@ -754,19 +836,13 @@ if config.randomness_source == RandomnessSource::External {
         Err(Error::InvalidParameters)
     }
 
-}
-
     /// Permissionless entrypoint — anyone may call this to prevent a raffle
     /// from being archived by Soroban's TTL expiry.
     ///
     /// This entrypoint is currently unimplemented and returns
     /// [`Error::InvalidParameters`]. It does not bump any TTLs.
-    ///
-    /// The intended permissionless behavior is design documentation only.
     pub fn extend_ttl(env: Env) -> Result<(), Error> {
-        let raffle = read_raffle(&env)?;
-        // This function was not implemented in the modules, keeping it inline for now.
-        // To complete the refactor, this logic should be moved to `helpers.rs`.
+        let _raffle = read_raffle(&env)?;
         Err(Error::InvalidParameters)
     }
 }

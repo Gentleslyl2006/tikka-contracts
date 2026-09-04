@@ -218,6 +218,10 @@ pub struct RaffleConfig {
     /// Seconds after finalization before winners may claim.
     /// Must be in [0, 604800] (0 to 7 days). Defaults to 3600 (1 hour) if not provided (None).
     pub claim_lockup_seconds: Option<u64>,
+    /// Seconds after finalization before unclaimed prizes may be swept to the
+    /// treasury.  Must be at least [`MIN_CLAIM_EXPIRY_SECONDS`] and strictly
+    /// greater than `claim_lockup_seconds`.  Defaults to 30 days if not set.
+    pub claim_expiry_seconds: Option<u64>,
     /// Swap deadline window in seconds (added to current timestamp for token swaps).
     /// Defaults to 300 (5 minutes) if not provided (None). Configurable to handle network congestion.
     pub swap_deadline_seconds: Option<u64>,
@@ -257,6 +261,9 @@ impl RaffleConfig {
         if self.swap_deadline_seconds.is_none() {
             self.swap_deadline_seconds = Some(DEFAULT_SWAP_DEADLINE_SECONDS);
         }
+        if self.claim_expiry_seconds.is_none() {
+            self.claim_expiry_seconds = Some(DEFAULT_CLAIM_EXPIRY_SECONDS);
+        }
         self
     }
 }
@@ -295,6 +302,18 @@ impl Ticket {
             payer: owner,
         }
     }
+}
+
+/// A single drawn winner and their claim state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[contracttype]
+pub struct Winner {
+    /// Address that owns the winning ticket at draw time.
+    pub address: Address,
+    /// True once this tier's prize has been paid out or swept.
+    pub claimed: bool,
+    /// Index into `Raffle::prizes` identifying the tier won.
+    pub tier_index: u32,
 }
 
 /// Audit data proving how a draw outcome was derived.
@@ -377,8 +396,9 @@ pub enum AdminOp {
 
 // Re-export constants from the single source of truth
 pub use constants::{
-    DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_PAGE_LIMIT, DEFAULT_SWAP_DEADLINE_SECONDS,
-    MAX_PAGE_LIMIT,
+    DEFAULT_CLAIM_EXPIRY_SECONDS, DEFAULT_CLAIM_LOCKUP_SECONDS, DEFAULT_PAGE_LIMIT,
+    DEFAULT_SWAP_DEADLINE_SECONDS, MAX_PAGE_LIMIT, MAX_SWEEP_UNCLAIMED_PER_CALL,
+    MIN_CLAIM_EXPIRY_SECONDS,
 };
 
 /// Returns a safe pagination limit clamped to supported bounds.
@@ -512,6 +532,7 @@ mod test {
             tikka_token: None,
             metadata_hash: BytesN::from_array(env, &[0; 32]),
             claim_lockup_seconds: None,
+            claim_expiry_seconds: None,
             swap_deadline_seconds: None,
             early_bird_ticket_percentage: 0,
             early_bird_discount_bp: 0,

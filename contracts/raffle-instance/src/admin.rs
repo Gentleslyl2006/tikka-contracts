@@ -33,10 +33,10 @@ fn outstanding_prize(env: &Env, raffle: &crate::Raffle) -> Result<i128, Error> {
     }
 
     let mut outstanding = 0i128;
-    for (tier_index, winner) in raffle.winners.iter().enumerate() {
-        if !winner.claimed {
+    for tier_index in 0..raffle.winners.len() {
+        if !raffle.claimed_winners.get(tier_index).unwrap_or(false) {
             outstanding = outstanding
-                .checked_add(calculate_tier_prize(raffle, tier_index as u32)?)
+                .checked_add(calculate_tier_prize(raffle, tier_index)?)
                 .ok_or(Error::ArithmeticOverflow)?;
         }
     }

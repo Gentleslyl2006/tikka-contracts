@@ -86,6 +86,23 @@ Source of truth: `DataKey` enum (and admin-cancel flow keys noted below).
 | `TicketRefunded(u32)` | **Persistent** | Once per refunded/claimed ticket | Yes | After full settlement | Idempotency marker |
 | `CommitEntry(u32)` | **Persistent** | `submit_commit` (CommitReveal mode) | Yes until draw | After finalize OK | Hash keyed by **ticket ID** (survives transfer) |
 
+### `Winner` entry (within the `Raffle` blob)
+
+`Raffle.winners` is a `Vec<Winner>` holding one entry per prize tier in draw
+order. It is a unified winner record that replaces the old parallel-array
+pattern (`winners: Vec<Address>` + `claimed_winners: Vec<bool>`). Each entry is
+written at finalization, and its `claimed` flag flips true on claim or sweep:
+
+| Field          | Type     | Meaning                                                                 |
+|----------------|----------|-------------------------------------------------------------------------|
+| `address`      | `Address`| Address that owned the winning ticket at draw time.                     |
+| `claimed`      | `bool`   | True once this tier's prize has been paid out or swept.                 |
+| `tier_index`   | `u32`    | Index into `Raffle::prizes` identifying the tier won.                   |
+
+`tier_index` names the tier consistently with `WinnerDrawn`, `PrizeClaimed`,
+`PrizeSwept`, and `claim_prize`. The type is defined in `raffle-shared` with
+`#[contracttype]` so it can be shared across contracts.
+
 ### Admin-cancel timelock key
 
 Admin cancellation scheduling (`execute_admin_cancel` / related flows) stores a unlock timestamp under **instance** storage as `PendingAdminCancel` (u64). Treat it as consensus-critical while a cancel is scheduled; remove after execution. If your checkout’s `DataKey` enum is mid-refactor, keep this key’s tier/lifetime aligned with those call sites.
@@ -145,6 +162,29 @@ stellar contract extend \
 ```
 
 Persistent keys need `--durability persistent` and `--key …` (or batched tooling). Ticket keys are **independent** of the instance TTL — bumping only the instance is not enough for long-running sales.
+
+## Tombstone model for `clean_old_raffle`
+
+`clean_old_raffle` removes a raffle from the stable map without shifting IDs:
+
+- `RaffleById(id)` is removed — the slot becomes a tombstone.
+- `NextRaffleId` is never decremented — IDs are never reused.
+- `RaffleCount` is decremented — this is the count of **live** raffles.
+- `CreatorRaffles` and `CategoryRaffles` are pruned — tombstones do not appear in per-creator or per-category views.
+
+### What `total` means in pagination
+
+- `get_raffles_page` returns `total = RaffleCount` (live raffles only).
+- `get_raffles_by_creator` returns `total = creator_vec.len()` (after pruning).
+- `get_raffles_by_category` returns `total = category_vec.len()` (after pruning).
+
+### Pagination semantics over a sparse ID space
+
+`get_raffles_page` collects all live raffles by scanning `RaffleById(0..NextRaffleId)`, skipping tombstones, then applies `offset` and `limit` on the dense live list. This guarantees:
+
+- No gaps or repeats across pages.
+- `has_more` is consistent with `total`.
+- Tombstoned raffles are invisible to every query path.
 
 ## Related docs
 
