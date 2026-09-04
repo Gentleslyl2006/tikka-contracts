@@ -1,5 +1,7 @@
 export type AlertSeverity = 'info' | 'warning' | 'critical';
 
+import { logger } from './logger';
+
 export interface AlertPayload {
   type: string;
   severity: AlertSeverity;
@@ -26,8 +28,8 @@ export class Alerter {
   private readonly lastSentAt: Map<string, number> = new Map();
 
   constructor(options: AlerterOptions = {}) {
-    this.webhookUrl = options.webhookUrl ?? process.env.ALERT_WEBHOOK_URL ?? '';
-    const rawRateLimit = options.rateLimitMs ?? Number(process.env.ALERT_RATE_LIMIT_MS ?? 60_000);
+    this.webhookUrl = options.webhookUrl ?? process.env['ALERT_WEBHOOK_URL'] ?? '';
+    const rawRateLimit = options.rateLimitMs ?? Number(process.env['ALERT_RATE_LIMIT_MS'] ?? 60_000);
     this.rateLimitMs = Number.isFinite(rawRateLimit) && rawRateLimit >= 0 ? rawRateLimit : 60_000;
     this.fetchImpl =
       options.fetchImpl ??
@@ -43,16 +45,24 @@ export class Alerter {
    * window. Returns `true` when the alert was delivered (or at least allowed
    * through the rate limiter), `false` when suppressed by rate limiting or when
    * no webhook is configured.
+   *
+   * Pass `bypassRateLimit: true` for events that must always notify (e.g.
+   * dead-letter entries — each represents a stalled raffle).
    */
-  async notify(alert: Omit<AlertPayload, 'timestamp'>): Promise<boolean> {
+  async notify(
+    alert: Omit<AlertPayload, 'timestamp'> & { bypassRateLimit?: boolean },
+  ): Promise<boolean> {
     if (!this.enabled) {
       return false;
     }
 
     const now = Date.now();
-    const lastSent = this.lastSentAt.get(alert.type) ?? 0;
-    if (now - lastSent < this.rateLimitMs) {
-      return false;
+    if (!alert.bypassRateLimit) {
+      const lastSent = this.lastSentAt.get(alert.type) ?? 0;
+      if (now - lastSent < this.rateLimitMs) {
+        return false;
+      }
+      this.lastSentAt.set(alert.type, now);
     }
 
     const payload: AlertPayload = { ...alert, timestamp: now };
@@ -73,10 +83,10 @@ export class Alerter {
         body: JSON.stringify(payload),
       });
       if (!response.ok) {
-        console.error(`Alert delivery failed: HTTP ${response.status}`);
+        logger.error(`Alert delivery failed: HTTP ${response.status}`);
       }
     } catch (error) {
-      console.error(
+      logger.error(
         `Alert delivery failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }

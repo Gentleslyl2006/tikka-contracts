@@ -19,11 +19,11 @@ describe('VrfService', () => {
   const keypair = Keypair.random();
 
   beforeEach(() => {
-    process.env.ORACLE_SECRET_KEY = keypair.secret();
+    process.env['ORACLE_SECRET_KEY'] = keypair.secret();
   });
 
   afterEach(() => {
-    delete process.env.ORACLE_SECRET_KEY;
+    delete process.env['ORACLE_SECRET_KEY'];
   });
 
   it('signs and verifies a context-bound randomness proof', async () => {
